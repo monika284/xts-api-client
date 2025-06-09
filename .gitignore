@@ -5,6 +5,7 @@ build/
 dist/
 wheels/
 *.egg-info
+example/socketio_example/example/socketio_example/logs/
 
 # Virtual environments
 .venv
@@ -12,6 +13,4 @@ wheels/
 # environment variable files
 .env
 
-#Ignore all files in the logs folder
-example/socketio_example/example/socketio_example/logs/2024-12-26_14-31-04_example.log
-example/socketio_example/example/socketio_example/logs/2024-12-26_15-47-00_example.log
+uv.lock
