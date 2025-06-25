@@ -1,5 +1,6 @@
 import json
 import logging
+from typing import List, Dict, Any
 
 #import httpx as requests
 from httpx import AsyncClient as requests
@@ -315,21 +316,17 @@ class XTSConnect(XTSCommon):
     async def get_balance(self, clientID=None):
         """Get Balance API call grouped under this category information related to limits on equities, derivative,
         upfront margin, available exposure and other RMS related balances available to the user."""
-        if self.isInvestorClient:
-            try:
-                params = {}
-                if not self.isInvestorClient:
-                    params['clientID'] = "*****"
-                else:
-                    params['clientID'] = clientID
-                response = await self._get('user.balance', params)
-                return response
-            except Exception as e:
-                return response['description']
-        else:
-            print("Balance : Balance API available for retail API users only, dealers can watch the same on dealer "
-                  "terminal")
-
+        try:
+            params = {}
+            if not self.isInvestorClient:
+                params['clientID'] = "*****"
+            else:
+                params['clientID'] = clientID
+            response = await self._get('user.balance', params)
+            return response
+        except Exception as e:
+            return response['description']
+   
     async def modify_order(self,
                      appOrderID,
                      modifiedProductType,
@@ -658,8 +655,36 @@ class XTSConnect(XTSCommon):
         except Exception as e:
             return response['description']
 
-    async def send_subscription(self, Instruments, xtsMessageCode):
-        """Send subscription for the instrument."""
+    async def send_subscription(
+        self,
+        Instruments: List[Dict[str, int]],
+        xtsMessageCode: int
+        ):
+        """
+        Sends a subscription request for the specified instruments using the given XTS message code.
+
+        Parameters:
+            Instruments (List[Dict[str, int]]): A list of instruments to subscribe to. 
+                Each instrument should be a dictionary with:
+                    - 'exchangeSegment' (int): Numeric code for the exchange segment.
+                    - 'exchangeInstrumentID' (int): Unique instrument ID in that segment.
+
+                Example:
+                    instruments = [
+                        {'exchangeSegment': 1, 'exchangeInstrumentID': 2885},
+                        {'exchangeSegment': 1, 'exchangeInstrumentID': 22}
+                    ]
+
+            xtsMessageCode (int): XTS message code specifying the type of subscription.
+                For example:
+                -TouchlineEvent               = 1501,
+                -MarketDepthEvent             = 1502,
+                -IndexDataEvent               = 1504,
+                -CandleDataEvent              = 1505,
+                -InstrumentPropertyChangeEvent = 1105,
+                -OpenInterestEvent            = 1510,
+                -LTPEvent                     = 1512
+            """
         try:
             params = {'instruments': Instruments, 'xtsMessageCode': xtsMessageCode}
             response = await self._post('market.instruments.subscription', json.dumps(params))
@@ -667,8 +692,36 @@ class XTSConnect(XTSCommon):
         except Exception as e:
             return response['description']
 
-    async def send_unsubscription(self, Instruments, xtsMessageCode):
-        """Send unsubscription for the instrument."""
+    async def send_unsubscription(
+        self,
+        Instruments: List[Dict[str, int]],
+        xtsMessageCode: int
+        ):
+        """
+        Sends an unsubscription request to stop receiving data for the specified instruments.
+
+        Parameters:
+            Instruments (List[Dict[str, int]]): A list of instruments to unsubscribe from. 
+                Each instrument should be a dictionary containing:
+                    - 'exchangeSegment' (int): Numeric code for the exchange segment.
+                    - 'exchangeInstrumentID' (int): Unique instrument ID in that segment.
+
+                Example:
+                    instruments = [
+                        {'exchangeSegment': 1, 'exchangeInstrumentID': 2885},
+                        {'exchangeSegment': 1, 'exchangeInstrumentID': 22}
+                    ]
+
+            xtsMessageCode (int): XTS message code specifying the type of subscription to cancel.
+                For example:
+                -TouchlineEvent               = 1501,
+                -MarketDepthEvent             = 1502,
+                -IndexDataEvent               = 1504,
+                -CandleDataEvent              = 1505,
+                -InstrumentPropertyChangeEvent = 1105,
+                -OpenInterestEvent            = 1510,
+                -LTPEvent                     = 1512
+        """
         try:
             params = {'instruments': Instruments, 'xtsMessageCode': xtsMessageCode}
             response = await self._put('market.instruments.unsubscription', json.dumps(params))
@@ -676,7 +729,10 @@ class XTSConnect(XTSCommon):
         except Exception as e:
             return response['description']
 
-    async def get_master(self, exchangeSegmentList):
+    async def get_master(
+        self,
+        exchangeSegmentList: List[int]
+        ):
         """Get the master string."""
         try:
             params = {"exchangeSegmentList": exchangeSegmentList}
@@ -685,8 +741,47 @@ class XTSConnect(XTSCommon):
         except Exception as e:
             return response['description']
 
-    async def get_ohlc(self, exchangeSegment, exchangeInstrumentID, startTime, endTime, compressionValue):
-        """Get the OHLC of the instrument."""
+    async def get_ohlc(
+        self,
+        exchangeSegment: int,
+        exchangeInstrumentID: int,
+        startTime: str,
+        endTime: str,
+        compressionValue: int):
+        """
+        Retrieves historical OHLC (Open, High, Low, Close) candle data for a given instrument.
+
+        Parameters:
+        exchangeSegment (int): Numeric identifier for the exchange segment. Supported values:
+                - 1  = NSECM
+                - 2  = NSEFO
+                - 3  = NSECD
+                - 4  = NSECO
+                - 5  = SLBM
+                - 7  = NIFSC
+                - 11 = BSECM
+                - 12 = BSEFO
+                - 13 = BSECD
+                - 14 = BSECO
+                - 21 = NCDEX
+                - 41 = MSECM
+                - 42 = MSEFO
+                - 43 = MSECD
+                - 51 = MCXFO
+
+        exchangeInstrumentID (int): Unique instrument ID for the given exchange segment.
+            - For NSECM, use NSE instrument ID (e.g., 22 for NIFTY).
+            - For BSECM, use BSE instrument ID (e.g., "526530").
+
+        startTime (str): Start time for the OHLC data in the format "MMM DD YYYY HHMMSS", e.g., "Dec 02 2024 091500".
+            - Time is in IST (Indian Standard Time).
+
+        endTime (str): End time for the OHLC data in the format "MMM DD YYYY HHMMSS", e.g., "Dec 02 2024 133000".
+            - Time is in IST and uses 24-hour format.
+
+        compressionValue (int): Timeframe for each candle in minutes.
+            - For example, 1 for 1-minute candles, 60 for hourly candles, etc.
+        """
         try:
             params = {
                 'exchangeSegment': exchangeSegment,
@@ -699,8 +794,30 @@ class XTSConnect(XTSCommon):
         except Exception as e:
             return response['description']
 
-    async def get_series(self, exchangeSegment):
-        """ Get the series of the exchange segment."""
+    async def get_series(
+        self,
+        exchangeSegment: int
+        ):
+        """ 
+        Retrieves the series of instruments available on a specific exchange segment.
+        Parameters:
+        exchangeSegment (int): Numeric identifier for the exchange segment. Supported values include:
+                - 1  = NSECM
+                - 2  = NSEFO
+                - 3  = NSECD
+                - 4  = NSECO
+                - 5  = SLBM
+                - 7  = NIFSC
+                - 11 = BSECM
+                - 12 = BSEFO
+                - 13 = BSECD
+                - 14 = BSECO
+                - 21 = NCDEX
+                - 41 = MSECM
+                - 42 = MSEFO
+                - 43 = MSECD
+                - 51 = MCXFO
+        """
         try:
             params = {'exchangeSegment': exchangeSegment}
             response = await self._get('market.instruments.instrument.series', params)
@@ -708,8 +825,41 @@ class XTSConnect(XTSCommon):
         except Exception as e:
             return response['description']
 
-    async def get_equity_symbol(self, exchangeSegment, series, symbol):
-        """ Get the equity symbol of the exchange segment."""
+    async def get_equity_symbol(
+        self,
+        exchangeSegment: int,
+        series: str,
+        symbol: str
+        ):
+        """ 
+        Retrieves the full equity symbol for a given instrument based on the exchange segment, series, and trading symbol.
+
+        Parameters:
+        exchangeSegment (int): Numeric identifier for the exchange segment. Supported values include:
+                - 1  = NSECM
+                - 2  = NSEFO
+                - 3  = NSECD
+                - 4  = NSECO
+                - 5  = SLBM
+                - 7  = NIFSC
+                - 11 = BSECM
+                - 12 = BSEFO
+                - 13 = BSECD
+                - 14 = BSECO
+                - 21 = NCDEX
+                - 41 = MSECM
+                - 42 = MSEFO
+                - 43 = MSECD
+                - 51 = MCXFO
+
+        series (str): Series type for the equity, such as:
+            - "EQ"  = Equity
+            - "BE"  = Trade-to-trade segment
+            - "BL", "BZ", etc., as applicable
+
+        symbol (str): Trading symbol of the security, e.g., "RELIANCE", "TATAMOTORS", "INFY".
+        
+        """
         try:
 
             params = {'exchangeSegment': exchangeSegment, 'series': series, 'symbol': symbol}
@@ -718,8 +868,37 @@ class XTSConnect(XTSCommon):
         except Exception as e:
             return response['description']
 
-    async def get_expiry_date(self, exchangeSegment, series, symbol):
-        """ Get the expiry date of the exchange segment."""
+    async def get_expiry_date(
+        self,
+        exchangeSegment: int,
+        series: str,
+        symbol: str
+        ):
+        """
+        Retrieves the available expiry dates for a given instrument on the specified exchange segment.
+
+        Parameters:
+            exchangeSegment (int): Numeric identifier for the exchange segment. Accepted values include:
+                - 1  = NSECM
+                - 2  = NSEFO
+                - 3  = NSECD
+                - 4  = NSECO
+                - 5  = SLBM
+                - 7  = NIFSC
+                - 11 = BSECM
+                - 12 = BSEFO
+                - 13 = BSECD
+                - 14 = BSECO
+                - 21 = NCDEX
+                - 41 = MSECM
+                - 42 = MSEFO
+                - 43 = MSECD
+                - 51 = MCXFO
+
+            series (str): Series type, such as "FUT", "OPTIDX", "OPTSTK", etc.
+
+            symbol (str): Trading symbol of the instrument, e.g., "NIFTY", "BANKNIFTY", "RELIANCE".
+        """
         try:
             params = {'exchangeSegment': exchangeSegment, 'series': series, 'symbol': symbol}
             response = await self._get('market.instruments.instrument.expirydate', params)
@@ -727,8 +906,41 @@ class XTSConnect(XTSCommon):
         except Exception as e:
             return response['description']
 
-    async def get_future_symbol(self, exchangeSegment, series, symbol, expiryDate):
-        """ Get the future symbol of the exchange segment."""
+    async def get_future_symbol(
+        self,
+        exchangeSegment: int,
+        series: str,
+        symbol: str,
+        expiryDate: str
+        ):
+        """
+        Retrieves the future symbol for the specified instrument parameters.
+
+        Parameters:
+            exchangeSegment (int): Numeric identifier for the exchange segment. Accepted values include:
+                - 1  = NSECM
+                - 2  = NSEFO
+                - 3  = NSECD
+                - 4  = NSECO
+                - 5  = SLBM
+                - 7  = NIFSC
+                - 11 = BSECM
+                - 12 = BSEFO
+                - 13 = BSECD
+                - 14 = BSECO
+                - 21 = NCDEX
+                - 41 = MSECM
+                - 42 = MSEFO
+                - 43 = MSECD
+                - 51 = MCXFO
+
+            series (str): Series type, such as "FUTIDX", "FUTSTK", or other valid series codes.
+
+            symbol (str): Trading symbol of the instrument, e.g., "NIFTY", "BANKNIFTY", "RELIANCE".
+
+            expiryDate (str): Expiry date of the futures contract in the format "DDMMMYYYY", e.g., "26Jun2025".
+
+        """
         try:
             params = {'exchangeSegment': exchangeSegment, 'series': series, 'symbol': symbol, 'expiryDate': expiryDate}
             response = await self._get('market.instruments.instrument.futuresymbol', params)
@@ -736,8 +948,47 @@ class XTSConnect(XTSCommon):
         except Exception as e:
             return response['description']
 
-    async def get_option_symbol(self, exchangeSegment, series, symbol, expiryDate, optionType, strikePrice):
-        """ Get the option symbol of the exchange segment."""
+    async def get_option_symbol(
+        self,
+        exchangeSegment: int,
+        series: str,
+        symbol: str,
+        expiryDate: str,
+        optionType: str,
+        strikePrice: float
+        ):
+        """
+        Retrieves the option symbol for a given set of parameters from the specified exchange segment.
+
+        Parameters:
+            exchangeSegment (int): Numeric identifier for the exchange segment. Accepted values include:
+                - 1  = NSECM
+                - 2  = NSEFO
+                - 3  = NSECD
+                - 4  = NSECO
+                - 5  = SLBM
+                - 7  = NIFSC
+                - 11 = BSECM
+                - 12 = BSEFO
+                - 13 = BSECD
+                - 14 = BSECO
+                - 21 = NCDEX
+                - 41 = MSECM
+                - 42 = MSEFO
+                - 43 = MSECD
+                - 51 = MCXFO
+
+            series (str): Series type, such as "EQ", "FUT", "OPTIDX", "OPTSTK", "OPTFO".
+
+            symbol (str): Trading symbol of the instrument, e.g., "RELIANCE", "TATAMOTORS", "NIFTY", "BANKNIFTY".
+
+            expiryDate (str): Expiry date of the option in the format "DDMMMYYYY", e.g., "26Jun2025".
+
+            optionType (str): Type of option - "CE" for Call Option or "PE" for Put Option.
+
+            strikePrice (float): Strike price of the option, e.g., 24500.0.
+
+        """
         try:
             params = {'exchangeSegment': exchangeSegment, 'series': series, 'symbol': symbol, 'expiryDate': expiryDate,
                       'optionType': optionType, 'strikePrice': strikePrice}
@@ -746,8 +997,41 @@ class XTSConnect(XTSCommon):
         except Exception as e:
             return response['description']
 
-    async def get_option_type(self, exchangeSegment, series, symbol, expiryDate):
-        """ Get the option type of the exchange segment."""
+    async def get_option_type(
+        self,
+        exchangeSegment: int,
+        series: str,
+        symbol: str,
+        expiryDate: str):
+        """
+        Retrieves the available option types (Call/Put) for a given instrument and expiry date 
+        on the specified exchange segment.
+
+        Parameters:
+            exchangeSegment (int): Numeric identifier for the exchange segment. Accepted values include:
+                - 1  = NSECM
+                - 2  = NSEFO
+                - 3  = NSECD
+                - 4  = NSECO
+                - 5  = SLBM
+                - 7  = NIFSC
+                - 11 = BSECM
+                - 12 = BSEFO
+                - 13 = BSECD
+                - 14 = BSECO
+                - 21 = NCDEX
+                - 41 = MSECM
+                - 42 = MSEFO
+                - 43 = MSECD
+                - 51 = MCXFO
+
+            series (str): Series type, such as "OPTIDX", "OPTSTK", or similar.
+
+            symbol (str): Trading symbol of the instrument, e.g., "NIFTY", "BANKNIFTY", "RELIANCE".
+
+            expiryDate (str): Expiry date in the format "DDMMMYYYY", e.g., "26Jun2025".
+
+            """
         try:
             params = {'exchangeSegment': exchangeSegment, 'series': series, 'symbol': symbol, 'expiryDate': expiryDate}
             response = await self._get('market.instruments.instrument.optiontype', params)
