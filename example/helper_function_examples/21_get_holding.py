@@ -1,8 +1,6 @@
 import asyncio
 from xts_api_client.xts_connect_async import XTSConnect
-from xts_api_client.helper.helper import async_squareoff_all_positions_
 import os
-
 
 API_key = os.getenv("INTERACTIVE_API_KEY")
 API_secret = os.getenv("INTERACTIVE_API_SECRET")
@@ -20,8 +18,10 @@ root = API_root
 
 async def main():
     await xt_interactive.interactive_login()
-
-    await async_squareoff_all_positions_(xt_interactive)
+    
+    respnse_get_holding = await xt_interactive.get_holding()
+    holding = respnse_get_holding['result']
+    print(f"Trade List: {holding}")
     
     await xt_interactive.interactive_logout()
 if __name__ == "__main__":

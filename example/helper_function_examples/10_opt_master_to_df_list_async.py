@@ -1,6 +1,4 @@
 import os
-from dotenv import load_dotenv
-load_dotenv()
 
 API_key = os.getenv("API_KEY")
 API_secret = os.getenv("API_SECRET")
@@ -20,7 +18,7 @@ async def main():
     source = API_source,
     root = API_root
     )
-    response_marketdata_login = await xt_market_data.marketdata_login()
+    await xt_market_data.marketdata_login()
 
     market_data_get_master = await xt_market_data.get_master(
         exchangeSegmentList = [xt_market_data.EXCHANGE_NSEFO] # Works for BSE as well.
@@ -34,6 +32,7 @@ async def main():
         )
 
     print(options_instrument_list)
+    await xt_market_data.marketdata_logout()
 if __name__ == "__main__":
     asyncio.run(main())
 """"""""""""""""""""""""""""""""""""""""""

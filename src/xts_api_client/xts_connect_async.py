@@ -169,7 +169,10 @@ class XTSConnect(XTSCommon):
         #requests.packages.urllib3.disable_warnings()
 
     def _set_common_variables(self, access_token,userID, isInvestorClient):
-        """Set the `access_token` received after a successful authentication."""
+        """
+        Set the `access_token` received after a successful authentication.
+        HELPER FUNCTION, DO NOT CALL DIRECTLY.
+        """
         super().__init__(access_token,userID, isInvestorClient)
 
     def _login_url(self):
@@ -177,7 +180,35 @@ class XTSConnect(XTSCommon):
         return self.root +  "/user/session"
 
     async def interactive_login(self):
-        """Send the login url to which a user should receive the token."""
+        """
+        Send the login url to which a user should receive the token.
+        ```
+        import os
+        API_key = os.getenv("API_KEY")
+        API_secret = os.getenv("API_SECRET")
+        API_source = os.getenv("API_SOURCE")
+        API_root = os.getenv("API_URL")
+        """"""""""""""""""""""""""""""""""""""""""
+            |DataFrame for Cash Market|
+        """"""""""""""""""""""""""""""""""""""""""
+        from xts_api_client.xts_connect_async import XTSConnect
+        import asyncio
+
+        async def main():
+            xt_market_data = XTSConnect(
+            apiKey = API_key,
+            secretKey = API_secret,
+            source = API_source,
+            root = API_root
+            )
+            responce_login = await xt_market_data.marketdata_login()
+            print(f"Loggin In: {responce_login}")
+            
+            await xt_market_data.marketdata_logout()
+        if __name__ == "__main__":
+            asyncio.run(main())
+        ```
+        """
         try:
             params = {
                 "appKey": self.apiKey,
@@ -195,7 +226,40 @@ class XTSConnect(XTSCommon):
             return response['description']
 
     async def get_order_book(self, clientID=None):
-        """Request Order book gives states of all the orders placed by an user"""
+        """
+        Request Order book gives states of all the orders placed by an user.
+        IMPORTANT: THIS WILL ONLY WORK AFTER LOGGING IN USING `interactive_login` METHOD.
+        ```
+        import asyncio
+        from xts_api_client.xts_connect_async import XTSConnect
+        import os
+
+        API_key = os.getenv("INTERACTIVE_API_KEY")
+        API_secret = os.getenv("INTERACTIVE_API_SECRET")
+        API_source = os.getenv("API_SOURCE")
+        API_root = os.getenv("API_URL")
+
+
+        xt_interactive = XTSConnect(
+        apiKey = API_key,
+        secretKey = API_secret,
+        source = API_source,
+        root = API_root
+        )
+
+
+        async def main():
+            await xt_interactive.interactive_login()
+            
+            respnse_get_order_book_list = await xt_interactive.get_order_book()
+            print(f"Order Book: {respnse_get_order_book_list['result']}")
+            
+            await xt_interactive.interactive_logout()
+        if __name__ == "__main__":
+            asyncio.run(main())
+
+        ```
+        """
         try:
             params = {}
             if not self.isInvestorClient:
@@ -208,7 +272,40 @@ class XTSConnect(XTSCommon):
             return response['description']
 		
     async def get_dealer_orderbook(self, clientID=None):
-        """Request Order book gives states of all the orders placed by an user"""
+        """
+        Request Order book gives states of all the orders placed by an user.
+        IMPORTANT: THIS WILL ONLY WORK AFTER LOGGING IN USING `interactive_login` METHOD.
+        ```
+        import asyncio
+        from xts_api_client.xts_connect_async import XTSConnect
+        import os
+
+        API_key = os.getenv("INTERACTIVE_API_KEY")
+        API_secret = os.getenv("INTERACTIVE_API_SECRET")
+        API_source = os.getenv("API_SOURCE")
+        API_root = os.getenv("API_URL")
+
+
+        xt_interactive = XTSConnect(
+        apiKey = API_key,
+        secretKey = API_secret,
+        source = API_source,
+        root = API_root
+        )
+
+        async def main():
+            await xt_interactive.interactive_login()
+            
+            respnse_get_dealer_orderbook = await xt_interactive.get_dealer_orderbook()
+            list_of_order_in_dealer_orderbook = respnse_get_dealer_orderbook['result']
+            print(f"Dealer Order Book: {list_of_order_in_dealer_orderbook}")
+            
+            await xt_interactive.interactive_logout()
+        if __name__ == "__main__":
+            asyncio.run(main())
+
+        ```
+        """
         try:
             params = {}
             if not self.isInvestorClient:
@@ -234,7 +331,9 @@ class XTSConnect(XTSCommon):
                     orderUniqueIdentifier,
                     clientID=None
                     ):
-        """To place an order"""
+        """
+        
+        """
         try:
 
             params = {
@@ -299,8 +398,9 @@ class XTSConnect(XTSCommon):
             return response['description']
 
     async def get_profile(self, clientID=None):
-        """Using session token user can access his profile stored with the broker, it's possible to retrieve it any
-        point of time with the http: //ip:port/interactive/user/profile API. """
+        """
+        THIS IS NOT WORKING AS OF NOW.
+        """
         try:
             params = {}
             if not self.isInvestorClient:
@@ -314,8 +414,39 @@ class XTSConnect(XTSCommon):
             return response['description']
 
     async def get_balance(self, clientID=None):
-        """Get Balance API call grouped under this category information related to limits on equities, derivative,
-        upfront margin, available exposure and other RMS related balances available to the user."""
+        """
+        Using session token user can access his balance stored with the broker.
+        IMPORTANT: THIS WILL ONLY WORK AFTER LOGGING IN USING `interactive_login` METHOD.
+        ```
+        import asyncio
+        from xts_api_client.xts_connect_async import XTSConnect
+        import os
+
+        API_key = os.getenv("INTERACTIVE_API_KEY")
+        API_secret = os.getenv("INTERACTIVE_API_SECRET")
+        API_source = os.getenv("API_SOURCE")
+        API_root = os.getenv("API_URL")
+
+
+        xt_interactive = XTSConnect(
+        apiKey = API_key,
+        secretKey = API_secret,
+        source = API_source,
+        root = API_root
+        )
+
+        async def main():
+            await xt_interactive.interactive_login()
+            
+            respnse_get_profile = await xt_interactive.get_balance()
+            print(f"Cash Available: {respnse_get_profile['result']['BalanceList'][0]['limitObject']['RMSSubLimits']['cashAvailable']}")
+            print(f"Net Margin Available: {respnse_get_profile['result']['BalanceList'][0]['limitObject']['RMSSubLimits']['netMarginAvailable']}")
+            
+            await xt_interactive.interactive_logout()
+        if __name__ == "__main__":
+            asyncio.run(main())
+        ```
+        """
         try:
             params = {}
             if not self.isInvestorClient:
@@ -367,8 +498,41 @@ class XTSConnect(XTSCommon):
             return response['description']
 
     async def get_trade(self, clientID=None):
-        """Trade book returns a list of all trades executed on a particular day , that were placed by the user . The
-        trade book will display all filled and partially filled orders. """
+        """
+        Trade book returns a list of all trades executed on a particular day , that were placed by the user . The
+        trade book will display all filled and partially filled orders.
+        IMPORTANT: THIS WILL ONLY WORK AFTER LOGGING IN USING `interactive_login` METHOD.
+        ```
+        import asyncio
+        from xts_api_client.xts_connect_async import XTSConnect
+        import os
+
+        API_key = os.getenv("INTERACTIVE_API_KEY")
+        API_secret = os.getenv("INTERACTIVE_API_SECRET")
+        API_source = os.getenv("API_SOURCE")
+        API_root = os.getenv("API_URL")
+
+
+        xt_interactive = XTSConnect(
+        apiKey = API_key,
+        secretKey = API_secret,
+        source = API_source,
+        root = API_root
+        )
+
+        async def main():
+            await xt_interactive.interactive_login()
+            
+            respnse_get_trade = await xt_interactive.get_trade()
+            list_of_trade = respnse_get_trade['result']
+            print(f"Trade List: {list_of_trade}")
+            
+            await xt_interactive.interactive_logout()
+        if __name__ == "__main__":
+            asyncio.run(main())
+
+        ```
+        """
         try:
             params = {}
             if not self.isInvestorClient:
@@ -381,8 +545,41 @@ class XTSConnect(XTSCommon):
             return response['description']
 
     async def get_dealer_tradebook(self, clientID=None):
-        """Trade book returns a list of all trades executed on a particular day , that were placed by the user . The
-        trade book will display all filled and partially filled orders. """
+        """
+        Trade book returns a list of all trades executed on a particular day , that were placed by the user . The
+        trade book will display all filled and partially filled orders.
+        IMPORTANT: THIS WILL ONLY WORK AFTER LOGGING IN USING `interactive_login` METHOD.
+        ```
+        import asyncio
+        from xts_api_client.xts_connect_async import XTSConnect
+        import os
+
+        API_key = os.getenv("INTERACTIVE_API_KEY")
+        API_secret = os.getenv("INTERACTIVE_API_SECRET")
+        API_source = os.getenv("API_SOURCE")
+        API_root = os.getenv("API_URL")
+
+
+        xt_interactive = XTSConnect(
+        apiKey = API_key,
+        secretKey = API_secret,
+        source = API_source,
+        root = API_root
+        )
+
+        async def main():
+            await xt_interactive.interactive_login()
+            
+            respnse_get_dealer_tradebook = await xt_interactive.get_dealer_tradebook()
+            list_of_trade = respnse_get_dealer_tradebook['result']
+            print(f"Trade List: {list_of_trade}")
+            
+            await xt_interactive.interactive_logout()
+        if __name__ == "__main__":
+            asyncio.run(main())
+
+        ```
+        """
         try:
             params = {}
             if not self.isInvestorClient:
@@ -395,7 +592,40 @@ class XTSConnect(XTSCommon):
             return response['description']
 		
     async def get_holding(self, clientID=None):
-        """Holdings API call enable users to check their long term holdings with the broker."""
+        """
+        Holdings API call enable users to check their long term holdings with the broker.
+        IMPORTANT: THIS WILL ONLY WORK AFTER LOGGING IN USING `interactive_login` METHOD.
+        ```
+        import asyncio
+        from xts_api_client.xts_connect_async import XTSConnect
+        import os
+
+        API_key = os.getenv("INTERACTIVE_API_KEY")
+        API_secret = os.getenv("INTERACTIVE_API_SECRET")
+        API_source = os.getenv("API_SOURCE")
+        API_root = os.getenv("API_URL")
+
+
+        xt_interactive = XTSConnect(
+        apiKey = API_key,
+        secretKey = API_secret,
+        source = API_source,
+        root = API_root
+        )
+
+        async def main():
+            await xt_interactive.interactive_login()
+            
+            respnse_get_holding = await xt_interactive.get_holding()
+            holding = respnse_get_holding['result']
+            print(f"Trade List: {holding}")
+            
+            await xt_interactive.interactive_logout()
+        if __name__ == "__main__":
+            asyncio.run(main())
+
+        ```
+        """
         try:
             params = {}
             if not self.isInvestorClient:

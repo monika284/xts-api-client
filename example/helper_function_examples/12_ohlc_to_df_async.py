@@ -1,6 +1,4 @@
 import os
-from dotenv import load_dotenv
-load_dotenv()
 
 API_key = os.getenv("API_KEY")
 API_secret = os.getenv("API_SECRET")
@@ -20,7 +18,7 @@ async def main():
     source = API_source,
     root = API_root
     )
-    response_marketdata_login = await xt_market_data.marketdata_login()
+    await xt_market_data.marketdata_login()
 
     marget_data_get_ohlc = await xt_market_data.get_ohlc(
         exchangeSegment = xt_market_data.EXCHANGE_NSECM, # Also Works for BSECM
@@ -33,6 +31,7 @@ async def main():
 
     ohlc_df = ohlc_to_df(marget_data_get_ohlc)
     print(ohlc_df)
+    await xt_market_data.marketdata_logout()
 if __name__ == "__main__":
     asyncio.run(main())
 """"""""""""""""""""""""""""""""""""""""""

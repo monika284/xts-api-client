@@ -1,7 +1,5 @@
 
 import os
-from dotenv import load_dotenv
-load_dotenv()
 
 API_key = os.getenv("API_KEY")
 API_secret = os.getenv("API_SECRET")
@@ -20,12 +18,14 @@ secretKey = API_secret,
 source = API_source,
 root = API_root
 )
-response_marketdata_login = xt_market_data.marketdata_login()
+xt_market_data.marketdata_login()
 
 market_data_get_master = xt_market_data.get_master(
 exchangeSegmentList = [xt_market_data.EXCHANGE_NSECM] # Works for BSECM as well.
 )
 
 print((cm_master_string_to_df(market_data_get_master['result'])))
+
+xt_market_data.marketdata_logout()
 """"""""""""""""""""""""""""""""""""""""""
 

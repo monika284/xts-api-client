@@ -1,6 +1,4 @@
 import os
-from dotenv import load_dotenv
-load_dotenv()
 
 API_key = os.getenv("API_KEY")
 API_secret = os.getenv("API_SECRET")
@@ -18,7 +16,7 @@ secretKey = API_secret,
 source = API_source,
 root = API_root
 )
-response_marketdata_login = xt_market_data.marketdata_login()
+xt_market_data.marketdata_login()
 
 market_data_get_master = xt_market_data.get_master(
 exchangeSegmentList = [xt_market_data.EXCHANGE_NSECM] # Works for BSE as well.
@@ -31,4 +29,5 @@ cm_instrument_list=cm_master_df_to_xts_cm_instrument_list(
     series_list_to_include = ["EQ","BE","BZ","SM","A","B"] # "EQ","BE","BZ" Are for NSE & "SM","A","B" are for BSE.
 )
 print(cm_instrument_list)
+xt_market_data.marketdata_logout()
 """"""""""""""""""""""""""""""""""""""""""

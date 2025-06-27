@@ -49,7 +49,8 @@ async def main():
     endTime = "Feb 06 2025 133000",
     compressionValue = 60)
     print(ohlc_to_df(marget_data_get_ohlc))
-
+    
+    await xt_market_data.marketdata_logout()
     # Change the values oh OHLC parameters as required.
 if __name__ == "__main__":
     asyncio.run(main())

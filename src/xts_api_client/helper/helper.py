@@ -387,17 +387,46 @@ def dostime_secomds_to_unixtime(_msdostime_inseconds, _timezone = "Asia/Kolkata"
     _ts_event = _ts_event_seconds  * 1_000_000_000
     return _ts_event
 
-async def async_squareoff_all_positions_(self, exchangeSegment,xt: XTSConnect):
+async def async_squareoff_all_positions_(xt:XTSConnect):
     '''
     It'll squareoff all open positions in the account
+    Parameters:
+        xt : XTSConnect object with interactive login.
 
     Returns => order_ids : list[]  = contains all squared off orders
+    ```
+    import asyncio
+    from xts_api_client.xts_connect_async import XTSConnect
+    from xts_api_client.helper.helper import async_squareoff_all_positions_
+    import os
+
+
+    API_key = os.getenv("INTERACTIVE_API_KEY")
+    API_secret = os.getenv("INTERACTIVE_API_SECRET")
+    API_source = os.getenv("API_SOURCE")
+    API_root = os.getenv("API_URL")
+
+
+    xt_interactive = XTSConnect(
+    apiKey = API_key,
+    secretKey = API_secret,
+    source = API_source,
+    root = API_root
+    )
+
+
+    async def main():
+        await xt_interactive.interactive_login()
+
+        await async_squareoff_all_positions_(xt_interactive)
+        
+        await xt_interactive.interactive_login()
+    if __name__ == "__main__":
+        asyncio.run(main())
+    ```
     '''
-
-    response_cancelall = await XTSConnect.cancelall_order(self, exchangeSegment=exchangeSegment, exchangeInstrumentID = 0)
-
     # Retrieve day-wise positions
-    response = await XTSConnect.get_position_daywise("*****")
+    response = await xt.get_position_daywise("*****")
 
     # Square off any open positions by placing market orders in the opposite direction
     sqrf_order_ids = []
@@ -405,7 +434,7 @@ async def async_squareoff_all_positions_(self, exchangeSegment,xt: XTSConnect):
         for i in response["result"]["positionList"]:
             if int(i["Quantity"]) != 0:
                 orde_side = "BUY" if i["Quantity"] < 0 else "SELL"
-                sqrf_response = self.xt.place_order(exchangeSegment=i["ExchangeSegment"], exchangeInstrumentID=int(i["ExchangeInstrumentId"]),productType=i["ProductType"],orderType='MARKET',orderSide= orde_side ,timeInForce="DAY",disclosedQuantity= i["Quantity"], orderQuantity= int(i["Quantity"]), limitPrice=0,stopPrice=0,orderUniqueIdentifier='exit_all',clientID="*****")
+                sqrf_response = xt.place_order(exchangeSegment=i["ExchangeSegment"], exchangeInstrumentID=int(i["ExchangeInstrumentId"]),productType=i["ProductType"],orderType='MARKET',orderSide= orde_side ,timeInForce="DAY",disclosedQuantity= i["Quantity"], orderQuantity= int(i["Quantity"]), limitPrice=0,stopPrice=0,orderUniqueIdentifier='exit_all',clientID="*****")
 
                 sqrf_response
                 if sqrf_response.get("result") and sqrf_response["result"].get("AppOrderID"):
@@ -414,7 +443,7 @@ async def async_squareoff_all_positions_(self, exchangeSegment,xt: XTSConnect):
                             sqrf_order_ids.append(order_id)
                 else:
                     print("Failed to place squareoff order:", sqrf_response.get("result", {}).get("AppOrderID"))
-        print(f'ssquared off all positions with IDs {sqrf_order_ids}')
+        print(f'Squared off all positions with IDs {sqrf_order_ids}')
         return sqrf_order_ids
     
     except Exception as e:

@@ -1,6 +1,4 @@
 import os
-from dotenv import load_dotenv
-load_dotenv()
 
 API_key = os.getenv("API_KEY")
 API_secret = os.getenv("API_SECRET")
@@ -20,7 +18,7 @@ async def main():
     source = API_source,
     root = API_root
     )
-    response_marketdata_login = await xt_market_data.marketdata_login()
+    await xt_market_data.marketdata_login()
 
     market_data_get_master = await xt_market_data.get_master(
     exchangeSegmentList = [xt_market_data.EXCHANGE_NSECM] # Works for BSE as well.
@@ -33,6 +31,7 @@ async def main():
         series_list_to_include = ["EQ","BE","BZ","SM","A","B"] # "EQ","BE","BZ" Are for NSE & "SM","A","B" are for BSE.
     )
     print(cm_instrument_list)
+    await xt_market_data.marketdata_logout()
 if __name__ == "__main__":
     asyncio.run(main())
 """"""""""""""""""""""""""""""""""""""""""

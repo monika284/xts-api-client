@@ -1,6 +1,4 @@
 import os
-from dotenv import load_dotenv
-load_dotenv()
 
 API_key = os.getenv("API_KEY")
 API_secret = os.getenv("API_SECRET")
@@ -35,5 +33,7 @@ future_master_df = fo_master_string_to_df(market_data_get_master['result'])
 print(future_master_df[2]) # This will give DataFrame for Spread.
 """
 print((fo_master_string_to_df(market_data_get_master['result'])))
+
+xt_market_data.marketdata_logout()
 
 """"""""""""""""""""""""""""""""""""""""""
