@@ -6,4 +6,3 @@ repos:
         entry: python .hooks/check_bump.py
         language: python
         types: [python]
-        files: .*
