@@ -12,7 +12,7 @@ dependencies = [
     "httpx>=0.28.1",
     "pandas>=2.2.3",
     "python-dotenv>=1.0.1",
-    "python-socketio==4.6.1",
+    "python-socketio@git+https://github.com/sharanchetan/python-socketio.git@v4.6.1.post1",
     "requests>=2.32.3",
     "urllib3>=2.2.3",
 ]
@@ -20,6 +20,9 @@ dependencies = [
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+[tool.hatch.metadata]
+allow-direct-references = true 
 
 [dependency-groups]
 dev = [
