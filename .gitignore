@@ -6,6 +6,7 @@ dist/
 wheels/
 *.egg-info
 example/socketio_example/example/socketio_example/logs/
+example/socketio_example/logs/
 
 # Virtual environments
 .venv
