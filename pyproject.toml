@@ -1,6 +1,6 @@
 [project]
 name = "xts-api-client"
-version = "0.1.18"
+version = "0.1.19"
 description = "A Package designed for connecting to a Stock Broker that uses Symphony Fintech Solutions Pvt. Ltd for there API."
 readme = "README.md"
 authors = [
@@ -15,6 +15,7 @@ dependencies = [
     "python-socketio@git+https://github.com/sharanchetan/python-socketio.git@v4.6.1.post1",
     "requests>=2.32.3",
     "urllib3>=2.2.3",
+    "pre-commit>=3.7.0",
 ]
 
 [build-system]
