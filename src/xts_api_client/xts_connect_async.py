@@ -7,9 +7,9 @@ from httpx import AsyncClient as requests
 from urllib.parse import urljoin
 from datetime import datetime
 import pytz
-
+from httpx import PoolTimeout, ConnectTimeout, ReadTimeout, ConnectError
 from . import xts_exception as ex
-
+import asyncio
 log = logging.getLogger(__name__)
 
 
@@ -331,9 +331,7 @@ class XTSConnect(XTSCommon):
                     orderUniqueIdentifier,
                     clientID=None
                     ):
-        """
-        
-        """
+        """To place an order"""
         try:
 
             params = {
@@ -359,7 +357,7 @@ class XTSConnect(XTSCommon):
             return response
         except Exception as e:
             return response['description']
-        
+   
     async def place_bracketorder(self,
                     exchangeSegment,
                     exchangeInstrumentID,
@@ -600,6 +598,7 @@ class XTSConnect(XTSCommon):
         from xts_api_client.xts_connect_async import XTSConnect
         import os
 
+
         API_key = os.getenv("INTERACTIVE_API_KEY")
         API_secret = os.getenv("INTERACTIVE_API_SECRET")
         API_source = os.getenv("API_SOURCE")
@@ -664,8 +663,6 @@ class XTSConnect(XTSCommon):
             return response
         except Exception as e:
             return response['description']
-
-
            
     async def get_dealerposition_daywise(self, clientID=None):
         """The positions API returns positions by day, which is a snapshot of the buying and selling activity for
@@ -844,6 +841,466 @@ class XTSConnect(XTSCommon):
             return response
         except Exception as e:
             return response['description']
+
+    async def cancel_order_v2(
+            self,
+            appOrderID,
+            orderUniqueIdentifier,
+            TIMEOUT_MAX_RETRIES: int = 4,
+            TIMEOUT_RETRY_DELAY: float = 0.5,
+            CONNECTIONERROR_MAX_RETRIES: int = 2,
+            CONNECTIONERROR_RETRY_DELAY: float = 3,
+            clientID=None
+        ):
+            """
+            Consistent with place_order_v2:
+            - First outer attempt (no loop)
+            - Timeout → internal retry loop
+            - ConnectError → internal retry loop
+            - Other errors → general handler with full debug info
+            """
+
+            params = {
+                "appOrderID": int(appOrderID),
+                "orderUniqueIdentifier": orderUniqueIdentifier,
+            }
+
+            params["clientID"] = "*****" if not self.isInvestorClient else self.userID
+
+            response = None  # store any partial server response
+
+            # ===================================================
+            # 🔵 OUTER FIRST ATTEMPT (NO LOOP)
+            # ===================================================
+            try:
+                response = await self._delete("order.cancel", params)
+                return response   # SUCCESS
+
+            # ===================================================
+            # 🟠 TIMEOUT → INTERNAL RETRY LOOP
+            # ===================================================
+            except (PoolTimeout, ConnectTimeout, ReadTimeout) as e:
+
+                for attempt in range(TIMEOUT_MAX_RETRIES):
+                    innerResponse = None
+                    try:
+                        await asyncio.sleep(TIMEOUT_RETRY_DELAY)
+                        innerResponse = await self._delete("order.cancel", params)
+                        return innerResponse  # success
+
+                    except (PoolTimeout, ConnectTimeout, ReadTimeout) as inner:
+                        if attempt == TIMEOUT_MAX_RETRIES - 1:
+                            raise ex.XTSNetworkException(
+                                f"[Timeout] Cancel order failed after {TIMEOUT_MAX_RETRIES} retries | "
+                                f"appOrderID={appOrderID} | "
+                                f"Error={str(inner)} | Response={innerResponse}"
+                            ) from inner
+
+                    except Exception as inner:
+                        raise ex.XTSInputException(
+                            f"[Unknown Error] cancelling order | "
+                            f"appOrderID={appOrderID} | "
+                            f"Error={str(inner)} | Response={innerResponse}"
+                        ) from inner
+
+                # unreachable
+
+            # ===================================================
+            # 🔴 CONNECT ERROR → INTERNAL RETRY LOOP
+            # ===================================================
+            except ConnectError as e:
+                innerResponse = None
+                print(f"ConnectError caught, entering retry loop...{orderUniqueIdentifier}")
+
+                for attempt in range(CONNECTIONERROR_MAX_RETRIES):
+                    try:
+                        await asyncio.sleep(CONNECTIONERROR_RETRY_DELAY)
+                        innerResponse = await self._delete("order.cancel", params)
+                        return innerResponse
+
+                    except ConnectError as inner:
+                        print(f"ConnectError retry {attempt + 1} failed.{orderUniqueIdentifier}")
+                        if attempt == CONNECTIONERROR_MAX_RETRIES - 1:
+                            raise ex.XTSNetworkException(
+                                f"[ConnectError] Cancel order failed after {CONNECTIONERROR_MAX_RETRIES} retries | "
+                                f"appOrderID={appOrderID} | "
+                                f"Error={str(inner)} | Response={innerResponse}"
+                            ) from inner
+
+                    except Exception as inner:
+                        print(f"Non-ConnectError exception caught in ConnectError retry loop.{orderUniqueIdentifier}")
+                        raise ex.XTSInputException(
+                            f"[Unknown Error] cancelling order | "
+                            f"appOrderID={appOrderID} | "
+                            f"Error={str(inner)} | Response={innerResponse}"
+                        ) from inner
+
+                # unreachable
+
+            # ===================================================
+            # 🔥 ALL OTHER ERRORS (UNCHANGED)
+            # ===================================================
+            except Exception as e:
+                print(f"General exception caught in outer attempt.{orderUniqueIdentifier}")
+                raise ex.XTSInputException(
+                    f"[Unknown Error] cancelling order | "
+                    f"appOrderID={appOrderID} | "
+                    f"Error={str(e)} | Response={response}"
+                ) from e
+
+    async def modify_order_v2(
+        self,
+        appOrderID,
+        modifiedProductType,
+        modifiedOrderType,
+        modifiedOrderQuantity,
+        modifiedDisclosedQuantity,
+        modifiedLimitPrice,
+        modifiedStopPrice,
+        modifiedTimeInForce,
+        orderUniqueIdentifier,
+        TIMEOUT_MAX_RETRIES: int = 4,
+        TIMEOUT_RETRY_DELAY: float = 0.5,
+        CONNECTIONERROR_MAX_RETRIES: int = 2,
+        CONNECTIONERROR_RETRY_DELAY: float = 3,
+        clientID=None,
+    ):
+        """
+        Consistent with place_order_v2 + cancel_order_v2:
+        - Outer single attempt
+        - Timeout → internal retry loop
+        - ConnectError → internal retry loop
+        - Full response context in all errors
+        """
+
+        appOrderID = int(appOrderID)
+
+        params = {
+            "appOrderID": appOrderID,
+            "modifiedProductType": modifiedProductType,
+            "modifiedOrderType": modifiedOrderType,
+            "modifiedOrderQuantity": modifiedOrderQuantity,
+            "modifiedDisclosedQuantity": modifiedDisclosedQuantity,
+            "modifiedLimitPrice": modifiedLimitPrice,
+            "modifiedStopPrice": modifiedStopPrice,
+            "modifiedTimeInForce": modifiedTimeInForce,
+            "orderUniqueIdentifier": orderUniqueIdentifier,
+        }
+
+        params["clientID"] = "*****" if not self.isInvestorClient else self.userID
+
+        response = None  # keep partial server response
+
+        # ===================================================
+        # 🔵 OUTER FIRST ATTEMPT (NO LOOP)
+        # ===================================================
+        try:
+            response = await self._put("order.modify", json.dumps(params))
+            return response  # SUCCESS
+
+        # ===================================================
+        # 🟠 TIMEOUT → INTERNAL RETRY LOOP
+        # ===================================================
+        except (PoolTimeout, ConnectTimeout, ReadTimeout) as e:
+
+            for attempt in range(TIMEOUT_MAX_RETRIES):
+                innerResponse = None
+                try:
+                    await asyncio.sleep(TIMEOUT_RETRY_DELAY)
+                    innerResponse = await self._put("order.modify", json.dumps(params))
+                    return innerResponse  # SUCCESS
+
+                except (PoolTimeout, ConnectTimeout, ReadTimeout) as inner:
+                    if attempt == TIMEOUT_MAX_RETRIES - 1:
+                        raise ex.XTSNetworkException(
+                            f"[Timeout] Modify order failed after {TIMEOUT_MAX_RETRIES} retries | "
+                            f"AppOrderID={appOrderID} | "
+                            f"Error={str(inner)} | Response={innerResponse}"
+                        ) from inner
+
+                except Exception as inner:
+                    raise ex.XTSInputException(
+                        f"[Unknown Error] modifying order | "
+                        f"AppOrderID={appOrderID} | "
+                        f"Error={str(inner)} | Response={innerResponse}"
+                    ) from inner
+
+            # unreachable
+
+        # ===================================================
+        # 🔴 CONNECT ERROR → INTERNAL RETRY LOOP
+        # ===================================================
+        except ConnectError as e:
+            innerResponse = None
+            print(f"ConnectError caught, entering retry loop...{orderUniqueIdentifier}")
+
+            for attempt in range(CONNECTIONERROR_MAX_RETRIES):
+                try:
+                    await asyncio.sleep(CONNECTIONERROR_RETRY_DELAY)
+                    innerResponse = await self._put("order.modify", json.dumps(params))
+                    return innerResponse
+
+                except ConnectError as inner:
+                    print(f"ConnectError retry {attempt + 1} failed.{orderUniqueIdentifier}")
+                    if attempt == CONNECTIONERROR_MAX_RETRIES - 1:
+                        raise ex.XTSNetworkException(
+                            f"[ConnectError] Modify order failed after {CONNECTIONERROR_MAX_RETRIES} retries | "
+                            f"AppOrderID={appOrderID} | "
+                            f"Error={str(inner)} | Response={innerResponse}"
+                        ) from inner
+
+                except Exception as inner:
+                    print(f"Non-ConnectError exception caught in ConnectError retry loop.{orderUniqueIdentifier}")
+                    raise ex.XTSInputException(
+                        f"[Unknown Error] modifying order | "
+                        f"AppOrderID={appOrderID} | "
+                        f"Error={str(inner)} | Response={innerResponse}"
+                    ) from inner
+
+            # unreachable
+
+        # ===================================================
+        # 🔥 ALL OTHER ERRORS
+        # ===================================================
+        except Exception as e:
+            print(f"General exception caught in outer attempt.{orderUniqueIdentifier}")
+            raise ex.XTSInputException(
+                f"[Unknown Error] modifying order | "
+                f"AppOrderID={appOrderID} | "
+                f"Error={str(e)} | Response={response}"
+            ) from e
+
+    async def place_order_v2(
+    self,
+    exchangeSegment,
+    exchangeInstrumentID,
+    productType,
+    orderType,
+    orderSide,
+    timeInForce,
+    disclosedQuantity,
+    orderQuantity,
+    limitPrice,
+    stopPrice,
+    orderUniqueIdentifier,
+    TIMEOUT_MAX_RETRIES: int = 4,
+    TIMEOUT_RETRY_DELAY: float = 0.5,
+    CONNECTIONERROR_MAX_RETRIES: int = 2,
+    CONNECTIONERROR_RETRY_DELAY: float = 3,
+    clientID=None
+    ):
+            
+        """
+        FIRST outer attempt (single try).
+        If timeout → do a FOR LOOP retry INSIDE the timeout handler.
+        If ConnectError → do a FOR LOOP retry INSIDE the connect error handler.
+        """
+
+        params = {
+            "exchangeSegment": exchangeSegment,
+            "exchangeInstrumentID": exchangeInstrumentID,
+            "productType": productType,
+            "orderType": orderType,
+            "orderSide": orderSide,
+            "timeInForce": timeInForce,
+            "disclosedQuantity": disclosedQuantity,
+            "orderQuantity": orderQuantity,
+            "limitPrice": limitPrice,
+            "stopPrice": stopPrice,
+            "orderUniqueIdentifier": orderUniqueIdentifier,
+        }
+
+        params["clientID"] = "*****" if not self.isInvestorClient else self.userID
+
+        response = None  # keep reference
+
+        # ===================================================
+        # 🔵 OUTER FIRST ATTEMPT (NO LOOP)
+        # ===================================================
+        try:
+            response = await self._post("order.place", json.dumps(params))
+            return response   # SUCCESS
+
+        # ===================================================
+        # 🟠 TIMEOUT → INTERNAL RETRY LOOP
+        # ===================================================
+        except (PoolTimeout, ConnectTimeout, ReadTimeout) as e:
+
+            for attempt in range(TIMEOUT_MAX_RETRIES):
+                innerResponse = None
+                try:
+                    await asyncio.sleep(TIMEOUT_RETRY_DELAY)
+                    innerResponse = await self._post("order.place", json.dumps(params))
+                    return innerResponse   # success
+                except (PoolTimeout, ConnectTimeout, ReadTimeout) as inner:
+                    if attempt == TIMEOUT_MAX_RETRIES - 1:
+                        raise ex.XTSNetworkException(
+                            f"[Timeout] Order failed after {TIMEOUT_MAX_RETRIES} retries | "
+                            f"InstrumentID={exchangeInstrumentID} Qty={orderQuantity} | "
+                            f"Error={str(inner)} | Response={innerResponse}"
+                        ) from inner
+                except Exception as inner:
+
+                    raise ex.XTSInputException(
+                        f"[Unknown Error] placing order | "
+                        f"InstrumentID={exchangeInstrumentID} Qty={orderQuantity} | "
+                        f"Error={str(inner)} | Response={innerResponse}"
+                    ) from inner
+
+            # unreachable due to return/raise
+
+        # ===================================================
+        # 🔴 CONNECT ERROR → INTERNAL RETRY LOOP
+        # ===================================================
+        except ConnectError as e:
+            innerResponse = None
+            print(f"ConnectError caught, entering retry loop...{orderUniqueIdentifier}")
+            
+            for attempt in range(CONNECTIONERROR_MAX_RETRIES):
+                try:
+                    await asyncio.sleep(CONNECTIONERROR_RETRY_DELAY)
+                    innerResponse = await self._post("order.place", json.dumps(params))
+                    return innerResponse
+                except ConnectError as inner:
+                    print(f"ConnectError retry attempt {attempt + 1} failed.{orderUniqueIdentifier}")
+                    if attempt == CONNECTIONERROR_MAX_RETRIES - 1:
+                        raise ex.XTSNetworkException(
+                            f"[ConnectError] Order failed after {CONNECTIONERROR_MAX_RETRIES} retries | "
+                            f"InstrumentID={exchangeInstrumentID} Qty={orderQuantity} | "
+                            f"Error={str(inner)} | Response={innerResponse}"
+                        ) from inner
+                except Exception as inner:
+                    print(f"Non-ConnectError exception caught in ConnectError retry loop.{orderUniqueIdentifier}")
+                    raise ex.XTSInputException(
+                        f"[Unknown Error] placing order | "
+                        f"InstrumentID={exchangeInstrumentID} Qty={orderQuantity} | "
+                        f"Error={str(inner)} | Response={innerResponse}"
+                    ) from inner
+
+            # unreachable
+
+        # ===================================================
+        # 🔥 ALL OTHER ERRORS (UNCHANGED)
+        # ===================================================
+        except Exception as e:
+            print(f"General exception caught in outer attempt.{orderUniqueIdentifier}")
+            raise ex.XTSInputException(
+                f"[Unknown Error] placing order | "
+                f"InstrumentID={exchangeInstrumentID} Qty={orderQuantity} | "
+                f"Error={str(e)} | Response={response}"
+            ) from e
+
+    async def cancelall_order_v2(
+            self,
+            exchangeSegment,
+            exchangeInstrumentID,
+            TIMEOUT_MAX_RETRIES: int = 4,
+            TIMEOUT_RETRY_DELAY: float = 0.5,
+            CONNECTIONERROR_MAX_RETRIES: int = 2,
+            CONNECTIONERROR_RETRY_DELAY: float = 3,
+            clientID=None
+        ):
+            """
+            V2 version consistent with cancel_order_v2 & place_order_v2:
+            - Outer first attempt (no loop)
+            - Timeout → internal retry loop
+            - ConnectError → internal retry loop
+            - Other errors → general exception with full debug information
+            """
+
+            # Prepare params
+            params = {
+                "exchangeSegment": exchangeSegment,
+                "exchangeInstrumentID": exchangeInstrumentID,
+            }
+
+            params["clientID"] = "*****" if not self.isInvestorClient else self.userID
+
+            response = None  # store partial response
+
+            # ===================================================
+            # 🔵 OUTER FIRST ATTEMPT (NO LOOP)
+            # ===================================================
+            try:
+                response = await self._post("order.cancelall", json.dumps(params))
+                return response  # success
+
+            # ===================================================
+            # 🟠 TIMEOUT → INTERNAL RETRY LOOP
+            # ===================================================
+            except (PoolTimeout, ConnectTimeout, ReadTimeout) as e:
+
+                for attempt in range(TIMEOUT_MAX_RETRIES):
+                    innerResponse = None
+                    try:
+                        await asyncio.sleep(TIMEOUT_RETRY_DELAY)
+                        innerResponse = await self._post("order.cancelall", json.dumps(params))
+                        return innerResponse  # success
+
+                    except (PoolTimeout, ConnectTimeout, ReadTimeout) as inner:
+                        if attempt == TIMEOUT_MAX_RETRIES - 1:
+                            raise ex.XTSNetworkException(
+                                f"[Timeout] CancelAll order failed after {TIMEOUT_MAX_RETRIES} retries | "
+                                f"exchangeSegment={exchangeSegment} | "
+                                f"exchangeInstrumentID={exchangeInstrumentID} | "
+                                f"Error={str(inner)} | Response={innerResponse}"
+                            ) from inner
+
+                    except Exception as inner:
+                        raise ex.XTSInputException(
+                            f"[Unknown Error] cancelling all orders | "
+                            f"exchangeSegment={exchangeSegment} | "
+                            f"exchangeInstrumentID={exchangeInstrumentID} | "
+                            f"Error={str(inner)} | Response={innerResponse}"
+                        ) from inner
+
+                # unreachable
+
+            # ===================================================
+            # 🔴 CONNECT ERROR → INTERNAL RETRY LOOP
+            # ===================================================
+            except ConnectError as e:
+                innerResponse = None
+                print(f"ConnectError caught, entering retry loop...{exchangeSegment}:{exchangeInstrumentID}")
+
+                for attempt in range(CONNECTIONERROR_MAX_RETRIES):
+                    try:
+                        await asyncio.sleep(CONNECTIONERROR_RETRY_DELAY)
+                        innerResponse = await self._post("order.cancelall", json.dumps(params))
+                        return innerResponse
+
+                    except ConnectError as inner:
+                        print(f"ConnectError retry {attempt + 1} failed.{exchangeSegment}:{exchangeInstrumentID}")
+                        if attempt == CONNECTIONERROR_MAX_RETRIES - 1:
+                            raise ex.XTSNetworkException(
+                                f"[ConnectError] CancelAll order failed after {CONNECTIONERROR_MAX_RETRIES} retries | "
+                                f"exchangeSegment={exchangeSegment} | "
+                                f"exchangeInstrumentID={exchangeInstrumentID} | "
+                                f"Error={str(inner)} | Response={innerResponse}"
+                            ) from inner
+
+                    except Exception as inner:
+                        print(f"Non-ConnectError exception caught in ConnectError retry loop.{exchangeSegment}:{exchangeInstrumentID}")
+                        raise ex.XTSInputException(
+                            f"[Unknown Error] cancelling all orders | "
+                            f"exchangeSegment={exchangeSegment} | "
+                            f"exchangeInstrumentID={exchangeInstrumentID} | "
+                            f"Error={str(inner)} | Response={innerResponse}"
+                        ) from inner
+
+                # unreachable
+
+            # ===================================================
+            # 🔥 ALL OTHER ERRORS
+            # ===================================================
+            except Exception as e:
+                print(f"General exception caught in outer attempt.{exchangeSegment}:{exchangeInstrumentID}")
+                raise ex.XTSInputException(
+                    f"[Unknown Error] cancelling all orders | "
+                    f"exchangeSegment={exchangeSegment} | "
+                    f"exchangeInstrumentID={exchangeInstrumentID} | "
+                    f"Error={str(e)} | Response={response}"
+                ) from e
 
     ########################################################################################################
     # Market data API
