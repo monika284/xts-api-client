@@ -1,6 +1,6 @@
 [project]
 name = "xts-api-client"
-version = "0.1.20"
+version = "0.1.21"
 description = "A Package designed for connecting to a Stock Broker that uses Symphony Fintech Solutions Pvt. Ltd for there API."
 readme = "README.md"
 authors = [
@@ -34,6 +34,7 @@ dev = [
     "pypiserver>=2.3.2",
     "aiohttp>=3.11.11",
     "pytest-asyncio>=0.25.0",
+    "ipykernel>=7.1.0",
 ]
 [project.urls]
 Homepage = "https://github.com/sharanchetan/xts-api-client"

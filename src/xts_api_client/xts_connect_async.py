@@ -1,5 +1,6 @@
 import json
 import logging
+import traceback
 from typing import List, Dict, Any
 
 #import httpx as requests
@@ -28,7 +29,7 @@ class XTSConnect(XTSCommon):
     # Products
     PRODUCT_MIS = "MIS"
     PRODUCT_NRML = "NRML"
-    PRODUCT_CNC = "CNC" # Added as per request from Jatin.
+    PRODUCT_CNC = "CNC"
 
     # Order types
     ORDER_TYPE_MARKET = "MARKET"
@@ -178,6 +179,42 @@ class XTSConnect(XTSCommon):
     def _login_url(self):
         """Get the remote login url to which a user should be redirected to initiate the login flow."""
         return self.root +  "/user/session"
+    
+    def _handle_response(self, response: Dict[str, Any], operation: str) -> Dict[str, Any]:
+        """
+        Centralized response handler for all API calls.
+        
+        Args:
+            response: The API response dictionary
+            operation: Description of the operation (e.g., "Get Order Book", "Place Order")
+        
+        Returns:
+            The response if successful
+            
+        Raises:
+            Exception: If the response indicates an error
+        """
+        if response.get('type') == 'success':
+            return response
+        elif response.get('type') == 'error':
+            error_msg = f"{operation} failed: {response.get('description', 'Unknown error')}"
+            log.error(error_msg)
+            raise Exception(error_msg)
+        elif response.get('result') is not None:
+            # Handle inconsistent XTS API behavior
+            return response
+        else:
+            error_msg = f"{operation} failed: Unexpected response format"
+            log.error(error_msg)
+            raise Exception(error_msg)
+
+    def _add_client_id(self, params: Dict[str, Any], clientID="*****") -> Dict[str, Any]:
+        """Add clientID to params based on isInvestorClient flag."""
+        if not self.isInvestorClient:
+            params['clientID'] = "*****"
+        else:
+            params['clientID'] = clientID if clientID else self.userID
+        return params
 
     async def interactive_login(self):
         """
@@ -201,31 +238,36 @@ class XTSConnect(XTSCommon):
             source = API_source,
             root = API_root
             )
-            responce_login = await xt_market_data.marketdata_login()
-            print(f"Loggin In: {responce_login}")
+            response_login = await xt_market_data.interactive_login()
+            print(f"Loggin In: {response_login}")
             
-            await xt_market_data.marketdata_logout()
+            await xt_market_data.interactive_logout()
         if __name__ == "__main__":
             asyncio.run(main())
         ```
         """
-        try:
-            params = {
-                "appKey": self.apiKey,
-                "secretKey": self.secretKey,
-                "source": self.source
-            }
-            response = await self._post("user.login", params)
-
-            if "token" in response['result']:
-                self._set_common_variables(response['result']['token'], response['result']['userID'],
-                                           response['result']['isInvestorClient'])
-                self._last_login_time = datetime.now(pytz.timezone("Asia/Kolkata"))
+        params = {
+            "appKey": self.apiKey,
+            "secretKey": self.secretKey,
+            "source": self.source
+        }
+        response = await self._post("user.login", params)
+        if response.get('type') == 'success':
+            self._set_common_variables(response['result']['token'], 
+                                       response['result']['userID'],
+                                       response['result']['isInvestorClient'])
+            self._last_login_time = datetime.now(pytz.timezone("Asia/Kolkata"))
             return response
-        except Exception as e:
-            return response['description']
+        elif response.get('type') == 'error':
+            error_msg = f"Login failed: {response.get('description', 'Unknown error')}"
+            log.error(error_msg)
+            raise Exception(error_msg)
+        else:
+            error_msg = "Login failed: Unexpected response format"
+            log.error(error_msg)
+            raise Exception(error_msg)
 
-    async def get_order_book(self, clientID=None):
+    async def get_order_book(self, clientID="*****"):
         """
         Request Order book gives states of all the orders placed by an user.
         IMPORTANT: THIS WILL ONLY WORK AFTER LOGGING IN USING `interactive_login` METHOD.
@@ -260,18 +302,12 @@ class XTSConnect(XTSCommon):
 
         ```
         """
-        try:
-            params = {}
-            if not self.isInvestorClient:
-                params['clientID'] = "*****"
-            else:
-                params['clientID'] = clientID
-            response = await self._get("order.status", params)
-            return response
-        except Exception as e:
-            return response['description']
+        params = {}
+        self._add_client_id(params, clientID)
+        response = await self._get("order.status", params)
+        return self._handle_response(response, "Get Order Book")
 		
-    async def get_dealer_orderbook(self, clientID=None):
+    async def get_dealer_orderbook(self, clientID="*****"):
         """
         Request Order book gives states of all the orders placed by an user.
         IMPORTANT: THIS WILL ONLY WORK AFTER LOGGING IN USING `interactive_login` METHOD.
@@ -306,16 +342,10 @@ class XTSConnect(XTSCommon):
 
         ```
         """
-        try:
-            params = {}
-            if not self.isInvestorClient:
-                params['clientID'] = "*****"
-            else:
-                params['clientID'] = clientID
-            response = await self._get("order.dealer.status", params)
-            return response
-        except Exception as e:
-            return response['description']
+        params = {}
+        self._add_client_id(params, clientID)
+        response = await self._get("order.dealer.status", params)
+        return self._handle_response(response, "Get Dealer Order Book")
 
     async def place_order(self,
                     exchangeSegment,
@@ -329,35 +359,26 @@ class XTSConnect(XTSCommon):
                     limitPrice,
                     stopPrice,
                     orderUniqueIdentifier,
-                    clientID=None
+                    clientID="*****"
                     ):
         """To place an order"""
-        try:
-
-            params = {
-                "exchangeSegment": exchangeSegment,
-                "exchangeInstrumentID": exchangeInstrumentID,
-                "productType": productType,
-                "orderType": orderType,
-                "orderSide": orderSide,
-                "timeInForce": timeInForce,
-                "disclosedQuantity": disclosedQuantity,
-                "orderQuantity": orderQuantity,
-                "limitPrice": limitPrice,
-                "stopPrice": stopPrice,
-                "orderUniqueIdentifier": orderUniqueIdentifier
-            }
-
-            if not self.isInvestorClient:
-                params['clientID'] = '*****' # Jatin
-            else:
-                params['clientID'] = self.userID
-
-            response = await self._post('order.place', json.dumps(params))
-            return response
-        except Exception as e:
-            return response['description']
-   
+        params = {
+            "exchangeSegment": exchangeSegment,
+            "exchangeInstrumentID": exchangeInstrumentID,
+            "productType": productType,
+            "orderType": orderType,
+            "orderSide": orderSide,
+            "timeInForce": timeInForce,
+            "disclosedQuantity": disclosedQuantity,
+            "orderQuantity": orderQuantity,
+            "limitPrice": limitPrice,
+            "stopPrice": stopPrice,
+            "orderUniqueIdentifier": orderUniqueIdentifier
+        }
+        self._add_client_id(params, clientID)
+        response = await self._post('order.place', json.dumps(params))
+        return self._handle_response(response, "Place Order")
+        
     async def place_bracketorder(self,
                     exchangeSegment,
                     exchangeInstrumentID,
@@ -371,47 +392,37 @@ class XTSConnect(XTSCommon):
 	                trailingStoploss,
                     isProOrder,
                     orderUniqueIdentifier,
+                    clientID="*****"
                      ):
         """To place a bracketorder"""
-        try:
+        params = {
+            "exchangeSegment": exchangeSegment,
+            "exchangeInstrumentID": exchangeInstrumentID,
+            "orderType": orderType,
+            "orderSide": orderSide,
+            "disclosedQuantity": disclosedQuantity,
+            "orderQuantity": orderQuantity,
+            "limitPrice": limitPrice,
+            "squarOff": squarOff,
+            "stopLossPrice": stopLossPrice,
+            "trailingStoploss": trailingStoploss,
+            "isProOrder": isProOrder,
+            "orderUniqueIdentifier": orderUniqueIdentifier
+        }
+        self._add_client_id(params, clientID)
+        response = await self._post('bracketorder.place', json.dumps(params))
+        return self._handle_response(response, "Place Bracket Order")
 
-            params = {
-                "exchangeSegment": exchangeSegment,
-                "exchangeInstrumentID": exchangeInstrumentID,
-                "orderType": orderType,
-                "orderSide": orderSide,
-                "disclosedQuantity": disclosedQuantity,
-                "orderQuantity": orderQuantity,
-                "limitPrice": limitPrice,
-                "squarOff": squarOff,
-                "stopLossPrice": stopLossPrice,
-                "trailingStoploss": trailingStoploss,
-                "isProOrder": isProOrder,
-             "orderUniqueIdentifier": orderUniqueIdentifier
-            }
-            response = await self._post('bracketorder.place', json.dumps(params))
-            print(response)
-            return response
-        except Exception as e:
-            return response['description']
-
-    async def get_profile(self, clientID=None):
+    async def get_profile(self, clientID="*****"):
         """
-        THIS IS NOT WORKING AS OF NOW.
+        Get a user profile details.
         """
-        try:
-            params = {}
-            if not self.isInvestorClient:
-                params['clientID'] = "*****"
-            else:
-                params['clientID'] = clientID
+        params = {}
+        self._add_client_id(params, clientID)
+        response = await self._get('user.profile', params)
+        return self._handle_response(response, "Get Profile")
 
-            response = await self._get('user.profile', params)
-            return response
-        except Exception as e:
-            return response['description']
-
-    async def get_balance(self, clientID=None):
+    async def get_balance(self, clientID="*****"):
         """
         Using session token user can access his balance stored with the broker.
         IMPORTANT: THIS WILL ONLY WORK AFTER LOGGING IN USING `interactive_login` METHOD.
@@ -445,16 +456,10 @@ class XTSConnect(XTSCommon):
             asyncio.run(main())
         ```
         """
-        try:
-            params = {}
-            if not self.isInvestorClient:
-                params['clientID'] = "*****"
-            else:
-                params['clientID'] = clientID
-            response = await self._get('user.balance', params)
-            return response
-        except Exception as e:
-            return response['description']
+        params = {}
+        self._add_client_id(params, clientID)
+        response = await self._get('user.balance', params)
+        return self._handle_response(response, "Get Balance")
    
     async def modify_order(self,
                      appOrderID,
@@ -466,36 +471,28 @@ class XTSConnect(XTSCommon):
                      modifiedStopPrice,
                      modifiedTimeInForce,
                      orderUniqueIdentifier,
-                     clientID=None
+                     clientID="*****"
                      ):
         """The facility to modify your open orders by allowing you to change limit order to market or vice versa,
         change Price or Quantity of the limit open order, change disclosed quantity or stop-loss of any
         open stop loss order. """
-        try:
-            appOrderID = int(appOrderID)
-            params = {
-                'appOrderID': appOrderID,
-                'modifiedProductType': modifiedProductType,
-                'modifiedOrderType': modifiedOrderType,
-                'modifiedOrderQuantity': modifiedOrderQuantity,
-                'modifiedDisclosedQuantity': modifiedDisclosedQuantity,
-                'modifiedLimitPrice': modifiedLimitPrice,
-                'modifiedStopPrice': modifiedStopPrice,
-                'modifiedTimeInForce': modifiedTimeInForce,
-                'orderUniqueIdentifier': orderUniqueIdentifier
-            }
-
-            if not self.isInvestorClient:
-                params['clientID'] = '*****' # Jatin, again :-)
-            else:
-                params['clientID'] = self.userID
-
-            response = await self._put('order.modify', json.dumps(params))
-            return response
-        except Exception as e:
-            return response['description']
-
-    async def get_trade(self, clientID=None):
+        appOrderID = int(appOrderID)
+        params = {
+            'appOrderID': appOrderID,
+            'modifiedProductType': modifiedProductType,
+            'modifiedOrderType': modifiedOrderType,
+            'modifiedOrderQuantity': modifiedOrderQuantity,
+            'modifiedDisclosedQuantity': modifiedDisclosedQuantity,
+            'modifiedLimitPrice': modifiedLimitPrice,
+            'modifiedStopPrice': modifiedStopPrice,
+            'modifiedTimeInForce': modifiedTimeInForce,
+            'orderUniqueIdentifier': orderUniqueIdentifier
+        }
+        self._add_client_id(params, clientID)
+        response = await self._put('order.modify', json.dumps(params))
+        return self._handle_response(response, "Modify Order")
+        
+    async def get_trade(self, clientID="*****"):
         """
         Trade book returns a list of all trades executed on a particular day , that were placed by the user . The
         trade book will display all filled and partially filled orders.
@@ -531,18 +528,12 @@ class XTSConnect(XTSCommon):
 
         ```
         """
-        try:
-            params = {}
-            if not self.isInvestorClient:
-                params['clientID'] = "*****"
-            else:
-                params['clientID'] = clientID
-            response = await self._get('trades', params)
-            return response
-        except Exception as e:
-            return response['description']
-
-    async def get_dealer_tradebook(self, clientID=None):
+        params = {}
+        self._add_client_id(params, clientID)
+        response = await self._get('trades', params)
+        return self._handle_response(response, "Get Trade")
+        
+    async def get_dealer_tradebook(self, clientID="*****"):
         """
         Trade book returns a list of all trades executed on a particular day , that were placed by the user . The
         trade book will display all filled and partially filled orders.
@@ -578,18 +569,12 @@ class XTSConnect(XTSCommon):
 
         ```
         """
-        try:
-            params = {}
-            if not self.isInvestorClient:
-                params['clientID'] = "*****"
-            else:
-                params['clientID'] = clientID
-            response = await self._get('dealer.trades', params)
-            return response
-        except Exception as e:
-            return response['description']
+        params = {}
+        self._add_client_id(params, clientID)
+        response = await self._get('dealer.trades', params)
+        return self._handle_response(response, "Get Dealer Tradebook")
 		
-    async def get_holding(self, clientID=None):
+    async def get_holding(self, clientID="*****"):
         """
         Holdings API call enable users to check their long term holdings with the broker.
         IMPORTANT: THIS WILL ONLY WORK AFTER LOGGING IN USING `interactive_login` METHOD.
@@ -625,222 +610,134 @@ class XTSConnect(XTSCommon):
 
         ```
         """
-        try:
-            params = {}
-            if not self.isInvestorClient:
-                params['clientID'] = "*****"
-            else:
-                params['clientID'] = clientID
+        params = {}
+        self._add_client_id(params, clientID)
+        response = await self._get('portfolio.holdings', params)
+        return self._handle_response(response, "Get Holding")
 
-            response = await self._get('portfolio.holdings', params)
-            return response
-        except Exception as e:
-            return response['description']
-
-    async def bracketorder_cancel(self, appOrderID, clientID=None):
+    async def bracketorder_cancel(self, appOrderID, clientID="*****"):
         """This API can be called to cancel any open order of the user by providing correct appOrderID matching with
         the chosen open order to cancel. """
-        try:
-            params = {'boEntryOrderId': int(appOrderID)}
-            if not self.isInvestorClient:
-                params['clientID'] = "*****"
-            else:
-                params['clientID'] = clientID
-            response = await self._delete('bracketorder.cancel', params)
-            return response
-        except Exception as e:
-            return response['description']   
+        params = {'boEntryOrderId': int(appOrderID)}
+        self._add_client_id(params, clientID)
+        response = await self._delete('bracketorder.cancel', params)
+        return self._handle_response(response, "Cancel Bracket Order")
 		
-    async def get_dealerposition_netwise(self, clientID=None):
+    async def get_dealerposition_netwise(self, clientID="*****"):
         """The positions API positions by net. Net is the actual, current net position portfolio."""
-        try:
-            params = {'dayOrNet': 'NetWise'}
-            if not self.isInvestorClient:
-                params['clientID'] = "*****"
-            else:
-                params['clientID'] = clientID
-            response = await self._get('portfolio.dealerpositions', params)
-            return response
-        except Exception as e:
-            return response['description']
+        params = {'dayOrNet': 'NetWise'}
+        self._add_client_id(params, clientID)
+        response = await self._get('portfolio.dealerpositions', params)
+        return self._handle_response(response, "Get Dealer Position Netwise")
            
-    async def get_dealerposition_daywise(self, clientID=None):
+    async def get_dealerposition_daywise(self, clientID="*****"):
         """The positions API returns positions by day, which is a snapshot of the buying and selling activity for
         that particular day."""
-        try:
-            params = {'dayOrNet': 'DayWise'}
-            if not self.isInvestorClient:
-                params['clientID'] = "*****"
-            else:
-                params['clientID'] = clientID
-            response = await self._get('portfolio.dealerpositions', params)
-            return response
-        except Exception as e:
-            return response['description']
+        params = {'dayOrNet': 'DayWise'}
+        self._add_client_id(params, clientID)
+        response = await self._get('portfolio.dealerpositions', params)
+        return self._handle_response(response, "Get Dealer Position Daywise")
 		
-    async def get_position_daywise(self, clientID=None):
+    async def get_position_daywise(self, clientID="*****"):
 	    
         """The positions API returns positions by day, which is a snapshot of the buying and selling activity for
         that particular day."""
-        try:
-            params = {'dayOrNet': 'DayWise'}
-            if not self.isInvestorClient:
-                params['clientID'] = "*****"
-            else:
-                params['clientID'] = clientID
-            response = await self._get('portfolio.positions', params)
-            return response
-        except Exception as e:
-            return response['description']
+        params = {'dayOrNet': 'DayWise'}
+        self._add_client_id(params, clientID)
+        response = await self._get('portfolio.positions', params)
+        return self._handle_response(response, "Get Position Daywise")
 
-    async def get_position_netwise(self, clientID=None):
+    async def get_position_netwise(self, clientID="*****"):
         """The positions API positions by net. Net is the actual, current net position portfolio."""
-        try:
-            params = {'dayOrNet': 'NetWise'}
-            if not self.isInvestorClient:
-                params['clientID'] = "*****"
-            else:
-                params['clientID'] = clientID
-            response = await self._get('portfolio.positions', params)
-            return response
-        except Exception as e:
-            return response['description']
+        params = {'dayOrNet': 'NetWise'}
+        self._add_client_id(params, clientID)
+        response = await self._get('portfolio.positions', params)
+        return self._handle_response(response, "Get Position Netwise")
 
     async def convert_position(self, exchangeSegment, exchangeInstrumentID, targetQty, isDayWise, oldProductType,
-                         newProductType, clientID=None):
+                         newProductType, clientID="*****"):
         """Convert position API, enable users to convert their open positions from NRML intra-day to Short term MIS or
         vice versa, provided that there is sufficient margin or funds in the account to effect such conversion """
-        try:
-            params = {
-                'exchangeSegment': exchangeSegment,
-                'exchangeInstrumentID': exchangeInstrumentID,
-                'targetQty': targetQty,
-                'isDayWise': isDayWise,
-                'oldProductType': oldProductType,
-                'newProductType': newProductType
-            }
-            if not self.isInvestorClient:
-                params['clientID'] = "*****"
-            else:
-                params['clientID'] = clientID
-            response = await self._put('portfolio.positions.convert', json.dumps(params))
-            return response
-        except Exception as e:
-            return response['description']
+        params = {
+            'exchangeSegment': exchangeSegment,
+            'exchangeInstrumentID': exchangeInstrumentID,
+            'targetQty': targetQty,
+            'isDayWise': isDayWise,
+            'oldProductType': oldProductType,
+            'newProductType': newProductType
+        }
+        self._add_client_id(params, clientID)
+        response = await self._put('portfolio.positions.convert', json.dumps(params))
+        return self._handle_response(response, "Convert Position")
 
-    async def cancel_order(self, appOrderID, orderUniqueIdentifier, clientID=None):
+    async def cancel_order(self, appOrderID, orderUniqueIdentifier, clientID="*****"):
         """This API can be called to cancel any open order of the user by providing correct appOrderID matching with
         the chosen open order to cancel. """
-        try:
-            params = {'appOrderID': int(appOrderID), 'orderUniqueIdentifier': orderUniqueIdentifier}
-            if not self.isInvestorClient:
-                params['clientID'] = '*****' # Jatin, returns
-            else:
-                params['clientID'] = self.userID
-            response = await self._delete('order.cancel', params)
-            return response
-        except Exception as e:
-            return response['description']
+        params = {'appOrderID': int(appOrderID), 'orderUniqueIdentifier': orderUniqueIdentifier}
+        self._add_client_id(params, clientID)
+        response = await self._delete('order.cancel', params)
+        return self._handle_response(response, "Cancel Order")
         
-    async def cancelall_order(self, exchangeSegment, exchangeInstrumentID):
+    async def cancelall_order(self, exchangeSegment, exchangeInstrumentID,clientID="*****"):
         """This API can be called to cancel all open order of the user by providing exchange segment and exchange instrument ID """
-        try:
-            params = {"exchangeSegment": exchangeSegment, "exchangeInstrumentID": exchangeInstrumentID}
-            if not self.isInvestorClient:
-                params['clientID'] = '*****' # Jatin, returns
-            else:
-                params['clientID'] = self.userID
-            response = await self._post('order.cancelall', json.dumps(params))
-            return response
-        except Exception as e:
-            return response['description']    
+        params = {"exchangeSegment": exchangeSegment, "exchangeInstrumentID": exchangeInstrumentID}
+        self._add_client_id(params, clientID)
+        response = await self._post('order.cancelall', json.dumps(params))
+        return self._handle_response(response, "Cancel All Order")
 
     async def place_cover_order(self, exchangeSegment, exchangeInstrumentID, orderSide,orderType, orderQuantity, disclosedQuantity,
-                          limitPrice, stopPrice, orderUniqueIdentifier, clientID=None):
+                          limitPrice, stopPrice, orderUniqueIdentifier, clientID="*****"):
         """A Cover Order is an advance intraday order that is accompanied by a compulsory Stop Loss Order. This helps
         users to minimize their losses by safeguarding themselves from unexpected market movements. A Cover Order
         offers high leverage and is available in Equity Cash, Equity F&O, Commodity F&O and Currency F&O segments. It
         has 2 orders embedded in itself, they are Limit/Market Order Stop Loss Order """
-        try:
+        params = {'exchangeSegment': exchangeSegment, 'exchangeInstrumentID': exchangeInstrumentID,
+                    'orderSide': orderSide, "orderType": orderType,'orderQuantity': orderQuantity, 'disclosedQuantity': disclosedQuantity,
+                    'limitPrice': limitPrice, 'stopPrice': stopPrice, 'orderUniqueIdentifier': orderUniqueIdentifier}
+        self._add_client_id(params, clientID)
+        response = await self._post('order.place.cover', json.dumps(params))
+        return self._handle_response(response, "Place Cover Order")
 
-            params = {'exchangeSegment': exchangeSegment, 'exchangeInstrumentID': exchangeInstrumentID,
-                      'orderSide': orderSide, "orderType": orderType,'orderQuantity': orderQuantity, 'disclosedQuantity': disclosedQuantity,
-                      'limitPrice': limitPrice, 'stopPrice': stopPrice, 'orderUniqueIdentifier': orderUniqueIdentifier}
-            if not self.isInvestorClient:
-                params['clientID'] = "*****"
-            else:
-                params['clientID'] = clientID
-            response = await self._post('order.place.cover', json.dumps(params))
-            return response
-        except Exception as e:
-            return response['description']
-
-    async def exit_cover_order(self, appOrderID, clientID=None):
+    async def exit_cover_order(self, appOrderID, clientID="*****"):
         """Exit Cover API is a functionality to enable user to easily exit an open stoploss order by converting it
         into Exit order. """
-        try:
-
-            params = {'appOrderID': appOrderID}
-            if not self.isInvestorClient:
-                params['clientID'] = "*****"
-            else:
-                params['clientID'] = clientID
-            response = await self._put('order.exit.cover', json.dumps(params))
-            return response
-        except Exception as e:
-            return response['description']
+        params = {'appOrderID': appOrderID}
+        self._add_client_id(params, clientID)
+        response = await self._put('order.exit.cover', json.dumps(params))
+        return self._handle_response(response, "Exit Cover Order")
 
     async def squareoff_position(self, exchangeSegment, exchangeInstrumentID, productType, squareoffMode,
                            positionSquareOffQuantityType, squareOffQtyValue, blockOrderSending, cancelOrders,
-                           clientID=None):
+                           clientID="*****"):
         """User can request square off to close all his positions in Equities, Futures and Option. Users are advised
         to use this request with caution if one has short term holdings. """
-        try:
+        params = {'exchangeSegment': exchangeSegment, 'exchangeInstrumentID': exchangeInstrumentID,
+                    'productType': productType, 'squareoffMode': squareoffMode,
+                    'positionSquareOffQuantityType': positionSquareOffQuantityType,
+                    'squareOffQtyValue': squareOffQtyValue, 'blockOrderSending': blockOrderSending,
+                    'cancelOrders': cancelOrders
+                    }
+        self._add_client_id(params, clientID)
+        response = await self._put('portfolio.squareoff', json.dumps(params))
+        return self._handle_response(response, "Squareoff Position")
 
-            params = {'exchangeSegment': exchangeSegment, 'exchangeInstrumentID': exchangeInstrumentID,
-                      'productType': productType, 'squareoffMode': squareoffMode,
-                      'positionSquareOffQuantityType': positionSquareOffQuantityType,
-                      'squareOffQtyValue': squareOffQtyValue, 'blockOrderSending': blockOrderSending,
-                      'cancelOrders': cancelOrders
-                      }
-            if not self.isInvestorClient:
-                params['clientID'] = "*****"
-            else:
-                params['clientID'] = clientID
-            response = await self._put('portfolio.squareoff', json.dumps(params))
-            return response
-        except Exception as e:
-            return response['description']
-
-    async def get_order_history(self, appOrderID, clientID=None):
+    async def get_order_history(self, appOrderID, clientID="*****"):
         """Order history will provide particular order trail chain. This indicate the particular order & its state
         changes. i.e.Pending New to New, New to PartiallyFilled, PartiallyFilled, PartiallyFilled & PartiallyFilled
         to Filled etc """
-        try:
-            params = {'appOrderID': appOrderID}
-            if not self.isInvestorClient:
-                params['clientID'] = "*****"
-            else:
-                params['clientID'] = clientID
-            response = await self._get('order.history', params)
-            return response
-        except Exception as e:
-            return response['description']
+        params = {'appOrderID': appOrderID}
+        self._add_client_id(params, clientID)
+        response = await self._get('order.history', params)
+        return self._handle_response(response, "Get Order History")
 
-    async def interactive_logout(self, clientID=None):
+    async def interactive_logout(self, clientID="*****"):
         """This call invalidates the session token and destroys the API session. After this, the user should go
         through login flow again and extract session token from login response before further activities. """
-        try:
-            params = {}
-            if not self.isInvestorClient:
-                params['clientID'] = "*****"
-            else:
-                params['clientID'] = clientID
-            response = await self._delete('user.logout', params)
-            self.token = None # Added this to reset token, so that we can login again.
-            return response
-        except Exception as e:
-            return response['description']
+        params = {}
+        self._add_client_id(params, clientID)
+        response = await self._delete('user.logout', params)
+        self.token = None # Added this to reset token, so that we can login again.
+        return self._handle_response(response, "Interactive Logout")
 
     async def cancel_order_v2(
             self,
@@ -850,7 +747,7 @@ class XTSConnect(XTSCommon):
             TIMEOUT_RETRY_DELAY: float = 0.5,
             CONNECTIONERROR_MAX_RETRIES: int = 2,
             CONNECTIONERROR_RETRY_DELAY: float = 3,
-            clientID=None
+            clientID="*****"
         ):
             """
             Consistent with place_order_v2:
@@ -864,7 +761,6 @@ class XTSConnect(XTSCommon):
                 "appOrderID": int(appOrderID),
                 "orderUniqueIdentifier": orderUniqueIdentifier,
             }
-
             params["clientID"] = "*****" if not self.isInvestorClient else self.userID
 
             response = None  # store any partial server response
@@ -963,7 +859,7 @@ class XTSConnect(XTSCommon):
         TIMEOUT_RETRY_DELAY: float = 0.5,
         CONNECTIONERROR_MAX_RETRIES: int = 2,
         CONNECTIONERROR_RETRY_DELAY: float = 3,
-        clientID=None,
+        clientID="*****",
     ):
         """
         Consistent with place_order_v2 + cancel_order_v2:
@@ -1087,7 +983,7 @@ class XTSConnect(XTSCommon):
     TIMEOUT_RETRY_DELAY: float = 0.5,
     CONNECTIONERROR_MAX_RETRIES: int = 2,
     CONNECTIONERROR_RETRY_DELAY: float = 3,
-    clientID=None
+    clientID="*****"
     ):
             
         """
@@ -1198,7 +1094,7 @@ class XTSConnect(XTSCommon):
             TIMEOUT_RETRY_DELAY: float = 0.5,
             CONNECTIONERROR_MAX_RETRIES: int = 2,
             CONNECTIONERROR_RETRY_DELAY: float = 3,
-            clientID=None
+            clientID="*****"
         ):
             """
             V2 version consistent with cancel_order_v2 & place_order_v2:
@@ -1308,39 +1204,38 @@ class XTSConnect(XTSCommon):
 
     async def marketdata_login(self):
         """Send the login url to which a user should receive the token."""
-        try:
-            params = {
-                "appKey": self.apiKey,
-                "secretKey": self.secretKey,
-                "source": self.source
-            }
-            response = await self._post("market.login", params)
+        params = {
+            "appKey": self.apiKey,
+            "secretKey": self.secretKey,
+            "source": self.source
+        }
+        response = await self._post("market.login", params)
 
-            if "token" in response['result']:
-                self._set_common_variables(response['result']['token'], response['result']['userID'],False)
-                self._last_login_time = datetime.now(pytz.timezone("Asia/Kolkata"))
+        if response.get('type') == 'success':
+            self._set_common_variables(response['result']['token'],
+                                       response['result']['userID'],False)
+            self._last_login_time = datetime.now(pytz.timezone("Asia/Kolkata"))
             return response
-        except Exception as e:
-            return response['description']
-
+        elif response.get('type') == 'error':
+            error_msg = f'API responded with error: {response.get("description","Unknown error")}'
+            log.error(error_msg)
+            raise Exception(error_msg)
+        else:
+            error_msg = 'Unexpected API response format.'
+            log.error(error_msg)
+            raise Exception(error_msg)
+        
     async def get_config(self):
         """Get the configuration of the client."""
-        try:
-            params = {}
-            response = await self._get('market.config', params)
-            return response
-        except Exception as e:
-            return response['description']
+        params = {}
+        response = await self._get('market.config', params)
+        return self._handle_response(response, "Get Config")
 
     async def get_quote(self, Instruments, xtsMessageCode, publishFormat):
         """Get the quote of the instrument."""
-        try:
-
-            params = {'instruments': Instruments, 'xtsMessageCode': xtsMessageCode, 'publishFormat': publishFormat}
-            response = await self._post('market.instruments.quotes', json.dumps(params))
-            return response
-        except Exception as e:
-            return response['description']
+        params = {'instruments': Instruments, 'xtsMessageCode': xtsMessageCode, 'publishFormat': publishFormat}
+        response = await self._post('market.instruments.quotes', json.dumps(params))
+        return self._handle_response(response, "Get Quote")
 
     async def send_subscription(
         self,
@@ -1372,12 +1267,9 @@ class XTSConnect(XTSCommon):
                 -OpenInterestEvent            = 1510,
                 -LTPEvent                     = 1512
             """
-        try:
-            params = {'instruments': Instruments, 'xtsMessageCode': xtsMessageCode}
-            response = await self._post('market.instruments.subscription', json.dumps(params))
-            return response
-        except Exception as e:
-            return response['description']
+        params = {'instruments': Instruments, 'xtsMessageCode': xtsMessageCode}
+        response = await self._post('market.instruments.subscription', json.dumps(params))
+        return self._handle_response(response, "Send Subscription")
 
     async def send_unsubscription(
         self,
@@ -1409,25 +1301,19 @@ class XTSConnect(XTSCommon):
                 -OpenInterestEvent            = 1510,
                 -LTPEvent                     = 1512
         """
-        try:
-            params = {'instruments': Instruments, 'xtsMessageCode': xtsMessageCode}
-            response = await self._put('market.instruments.unsubscription', json.dumps(params))
-            return response
-        except Exception as e:
-            return response['description']
+        params = {'instruments': Instruments, 'xtsMessageCode': xtsMessageCode}
+        response = await self._put('market.instruments.unsubscription', json.dumps(params))
+        return self._handle_response(response, "Send Unsubscription")
 
     async def get_master(
         self,
         exchangeSegmentList: List[int]
         ):
         """Get the master string."""
-        try:
-            params = {"exchangeSegmentList": exchangeSegmentList}
-            response = await self._post('market.instruments.master', json.dumps(params))
-            return response
-        except Exception as e:
-            return response['description']
-
+        params = {"exchangeSegmentList": exchangeSegmentList}
+        response = await self._post('market.instruments.master', json.dumps(params))
+        return self._handle_response(response, "Get Master")
+        
     async def get_ohlc(
         self,
         exchangeSegment: int,
@@ -1469,17 +1355,14 @@ class XTSConnect(XTSCommon):
         compressionValue (int): Timeframe for each candle in minutes.
             - For example, 1 for 1-minute candles, 60 for hourly candles, etc.
         """
-        try:
-            params = {
-                'exchangeSegment': exchangeSegment,
-                'exchangeInstrumentID': exchangeInstrumentID,
-                'startTime': startTime,
-                'endTime': endTime,
-                'compressionValue': compressionValue}
-            response = await self._get('market.instruments.ohlc', params)
-            return response
-        except Exception as e:
-            return response['description']
+        params = {
+            'exchangeSegment': exchangeSegment,
+            'exchangeInstrumentID': exchangeInstrumentID,
+            'startTime': startTime,
+            'endTime': endTime,
+            'compressionValue': compressionValue}
+        response = await self._get('market.instruments.ohlc', params)
+        return self._handle_response(response, "Get OHLC")
 
     async def get_series(
         self,
@@ -1505,12 +1388,9 @@ class XTSConnect(XTSCommon):
                 - 43 = MSECD
                 - 51 = MCXFO
         """
-        try:
-            params = {'exchangeSegment': exchangeSegment}
-            response = await self._get('market.instruments.instrument.series', params)
-            return response
-        except Exception as e:
-            return response['description']
+        params = {'exchangeSegment': exchangeSegment}
+        response = await self._get('market.instruments.instrument.series', params)
+        return self._handle_response(response, "Get Series")
 
     async def get_equity_symbol(
         self,
@@ -1547,13 +1427,9 @@ class XTSConnect(XTSCommon):
         symbol (str): Trading symbol of the security, e.g., "RELIANCE", "TATAMOTORS", "INFY".
         
         """
-        try:
-
-            params = {'exchangeSegment': exchangeSegment, 'series': series, 'symbol': symbol}
-            response = await self._get('market.instruments.instrument.equitysymbol', params)
-            return response
-        except Exception as e:
-            return response['description']
+        params = {'exchangeSegment': exchangeSegment, 'series': series, 'symbol': symbol}
+        response = await self._get('market.instruments.instrument.equitysymbol', params)
+        return self._handle_response(response, "Get Equity Symbol")
 
     async def get_expiry_date(
         self,
@@ -1586,12 +1462,9 @@ class XTSConnect(XTSCommon):
 
             symbol (str): Trading symbol of the instrument, e.g., "NIFTY", "BANKNIFTY", "RELIANCE".
         """
-        try:
-            params = {'exchangeSegment': exchangeSegment, 'series': series, 'symbol': symbol}
-            response = await self._get('market.instruments.instrument.expirydate', params)
-            return response
-        except Exception as e:
-            return response['description']
+        params = {'exchangeSegment': exchangeSegment, 'series': series, 'symbol': symbol}
+        response = await self._get('market.instruments.instrument.expirydate', params)
+        return self._handle_response(response, "Get Expiry Date")
 
     async def get_future_symbol(
         self,
@@ -1628,12 +1501,9 @@ class XTSConnect(XTSCommon):
             expiryDate (str): Expiry date of the futures contract in the format "DDMMMYYYY", e.g., "26Jun2025".
 
         """
-        try:
-            params = {'exchangeSegment': exchangeSegment, 'series': series, 'symbol': symbol, 'expiryDate': expiryDate}
-            response = await self._get('market.instruments.instrument.futuresymbol', params)
-            return response
-        except Exception as e:
-            return response['description']
+        params = {'exchangeSegment': exchangeSegment, 'series': series, 'symbol': symbol, 'expiryDate': expiryDate}
+        response = await self._get('market.instruments.instrument.futuresymbol', params)
+        return self._handle_response(response, "Get Future Symbol")
 
     async def get_option_symbol(
         self,
@@ -1676,13 +1546,10 @@ class XTSConnect(XTSCommon):
             strikePrice (float): Strike price of the option, e.g., 24500.0.
 
         """
-        try:
-            params = {'exchangeSegment': exchangeSegment, 'series': series, 'symbol': symbol, 'expiryDate': expiryDate,
-                      'optionType': optionType, 'strikePrice': strikePrice}
-            response = await self._get('market.instruments.instrument.optionsymbol', params)
-            return response
-        except Exception as e:
-            return response['description']
+        params = {'exchangeSegment': exchangeSegment, 'series': series, 'symbol': symbol, 'expiryDate': expiryDate,
+                    'optionType': optionType, 'strikePrice': strikePrice}
+        response = await self._get('market.instruments.instrument.optionsymbol', params)
+        return self._handle_response(response, "Get Option Symbol")
 
     async def get_option_type(
         self,
@@ -1719,49 +1586,40 @@ class XTSConnect(XTSCommon):
             expiryDate (str): Expiry date in the format "DDMMMYYYY", e.g., "26Jun2025".
 
             """
-        try:
-            params = {'exchangeSegment': exchangeSegment, 'series': series, 'symbol': symbol, 'expiryDate': expiryDate}
-            response = await self._get('market.instruments.instrument.optiontype', params)
-            return response
-        except Exception as e:
-            return response['description']
+        params = {'exchangeSegment': exchangeSegment, 'series': series, 'symbol': symbol, 'expiryDate': expiryDate}
+        response = await self._get('market.instruments.instrument.optiontype', params)
+        return self._handle_response(response, "Get Option Type")
 
     async def get_index_list(self, exchangeSegment):
         """ Get the index list of the exchange segment."""
-        try:
-            params = {'exchangeSegment': exchangeSegment}
-            response = await self._get('market.instruments.indexlist', params)
-            return response
-        except Exception as e:
-            return response['description']
+        params = {'exchangeSegment': exchangeSegment}
+        response = await self._get('market.instruments.indexlist', params)
+        return self._handle_response(response, "Get Index List")
 
     async def search_by_instrumentid(self, Instruments):
-        """ Search by instrument id."""
-        try:
-            params = {'source': self.source, 'instruments': Instruments}
-            response = await self._post('market.search.instrumentsbyid', json.dumps(params))
-            return response
-        except Exception as e:
-            return response['description']
+        """ Search by instrument id.\n
+        eg. \n
+        ```
+            instruments = [{"exchangeSegment":2,"exchangeInstrumentID":47631}]
+            resp = await xt_market_data.search_by_instrumentid(instruments)
+        ```
+        """
+        params = {'source': self.source, 'instruments': Instruments}
+        response = await self._post('market.search.instrumentsbyid', json.dumps(params))
+        return self._handle_response(response, "Search by Instrument ID")
 
     async def search_by_scriptname(self, searchString):
         """ Search by script name."""
-        try:
-            params = {'searchString': searchString}
-            response = await self._get('market.search.instrumentsbystring', params)
-            return response
-        except Exception as e:
-            return response['description']
+        params = {'searchString': searchString}
+        response = await self._get('market.search.instrumentsbystring', params)
+        return self._handle_response(response, "Search by Script Name")
 
     async def marketdata_logout(self):
         """This call invalidates the session token and destroys the API session. After this, the user should go"""
-        try:
-            params = {}
-            response = await self._delete('market.logout', params)
-            self.token = None # Added this to reset token, so that we can login again.
-            return response
-        except Exception as e:
-            return response['description']
+        params = {}
+        response = await self._delete('market.logout', params)
+        self.token = None # Added this to reset token, so that we can login again.
+        return self._handle_response(response, "Market Data Logout")
 
     ########################################################################################################
     # Common Methods
@@ -1809,6 +1667,9 @@ class XTSConnect(XTSCommon):
                                         params=params if method in ["GET", "DELETE"] else None,
                                         headers=headers)
         except Exception as e:
+            #log the full stack trace for debugging
+            log.error(f"Request failed for {method} {url} with error: {str(e)}")
+            log.error(f"Stack trace:\n{traceback.format_exc()}")
             raise e
 
         if self.debug:
@@ -1819,6 +1680,8 @@ class XTSConnect(XTSCommon):
             try:
                 data = json.loads(r.content.decode("utf8"))
             except ValueError:
+                log.error(f"JSON parsing failed for response content: {r.content}")
+                log.error(f"Stack trace:\n{traceback.format_exc()}")
                 raise ex.XTSDataException("Couldn't parse the JSON response received from the server: {content}".format(
                     content=r.content))
 
@@ -1829,11 +1692,12 @@ class XTSConnect(XTSCommon):
                     raise ex.XTSTokenException(data["description"])
 
                 if r.status_code == 400 and data["type"] == "error" and data["description"] == "Bad Request":
-                    message = "Description: " + data["description"] + " errors: " + str(data['result']["errors"])
+                    message = f"Description: {data['description']} errors: {str(data['result'].get('errors', []))}"
                     raise ex.XTSInputException(str(message))
 
             return data
         else:
+            log.error(f"Invalid Content-Type: {r.headers.get('content-type','')} for response content: {r.content}")
             raise ex.XTSDataException("Unknown Content-Type ({content_type}) with response: ({content})".format(
-                content_type=r.headers["content-type"],
+                content_type=r.headers.get("content-type"),
                 content=r.content))
