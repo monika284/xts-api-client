@@ -1442,7 +1442,7 @@ wheels = [
 
 [[package]]
 name = "xts-api-client"
-version = "0.1.20"
+version = "0.1.21"
 source = { editable = "." }
 dependencies = [
     { name = "aiohttp" },
@@ -1451,6 +1451,7 @@ dependencies = [
     { name = "pre-commit" },
     { name = "python-dotenv" },
     { name = "python-socketio-rishavrmoney" },
+    { name = "pytz" },
     { name = "requests" },
     { name = "urllib3" },
 ]
@@ -1475,6 +1476,7 @@ requires-dist = [
     { name = "pre-commit", specifier = ">=3.7.0" },
     { name = "python-dotenv", specifier = ">=1.0.1" },
     { name = "python-socketio-rishavrmoney", specifier = ">=4.6.1" },
+    { name = "pytz", specifier = ">=2024.2" },
     { name = "requests", specifier = ">=2.32.3" },
     { name = "urllib3", specifier = ">=2.2.3" },
 ]
