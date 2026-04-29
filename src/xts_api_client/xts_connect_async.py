@@ -11,7 +11,6 @@ import pytz
 from httpx import PoolTimeout, ConnectTimeout, ReadTimeout, ConnectError
 from . import xts_exception as ex
 import asyncio
-log = logging.getLogger(__name__)
 
 
 class XTSCommon:
@@ -130,7 +129,9 @@ class XTSConnect(XTSCommon):
                  debug=False,
                  timeout=1200, # chnaged from 7 to 1200, around 20 minutes.
                  pool=None,
-                 disable_ssl=True):
+                 disable_ssl=True,
+                 logger=None
+                 ):
         """
         Initialise a new XTS Connect client instance.
 
@@ -154,6 +155,22 @@ class XTSConnect(XTSCommon):
         self.root = root 
         self.timeout = timeout
         self.last_login_time = None   
+
+        if isinstance(logger, logging.Logger):
+            # If they passed an actual Logger object, use it as is
+            self.log = logger
+        elif isinstance(logger, str):
+            # If they passed a string, set up a FileHandler for them
+            self.log = logging.getLogger(__name__)
+            if not self.log.handlers:
+                handler = logging.FileHandler(logger)
+                fmt = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+                handler.setFormatter(fmt)
+                self.log.addHandler(handler)
+                self.log.setLevel(logging.DEBUG if debug else logging.INFO)
+        else:
+            # Fallback: use the standard module-level logger
+            self.log = logging.getLogger(__name__)
 
         super().__init__()
 
@@ -198,14 +215,14 @@ class XTSConnect(XTSCommon):
             return response
         elif response.get('type') == 'error':
             error_msg = f"{operation} failed: {response.get('description', 'Unknown error')}"
-            log.error(error_msg)
+            self.log.error(error_msg)
             raise Exception(error_msg)
         elif response.get('result') is not None:
             # Handle inconsistent XTS API behavior
             return response
         else:
             error_msg = f"{operation} failed: Unexpected response format"
-            log.error(error_msg)
+            self.log.error(error_msg)
             raise Exception(error_msg)
 
     def _add_client_id(self, params: Dict[str, Any], clientID="*****") -> Dict[str, Any]:
@@ -260,11 +277,11 @@ class XTSConnect(XTSCommon):
             return response
         elif response.get('type') == 'error':
             error_msg = f"Login failed: {response.get('description', 'Unknown error')}"
-            log.error(error_msg)
+            self.log.error(error_msg)
             raise Exception(error_msg)
         else:
             error_msg = "Login failed: Unexpected response format"
-            log.error(error_msg)
+            self.log.error(error_msg)
             raise Exception(error_msg)
 
     async def get_order_book(self, clientID="*****"):
@@ -1218,11 +1235,11 @@ class XTSConnect(XTSCommon):
             return response
         elif response.get('type') == 'error':
             error_msg = f'API responded with error: {response.get("description","Unknown error")}'
-            log.error(error_msg)
+            self.log.error(error_msg)
             raise Exception(error_msg)
         else:
             error_msg = 'Unexpected API response format.'
-            log.error(error_msg)
+            self.log.error(error_msg)
             raise Exception(error_msg)
         
     async def get_config(self):
@@ -1668,20 +1685,20 @@ class XTSConnect(XTSCommon):
                                         headers=headers)
         except Exception as e:
             #log the full stack trace for debugging
-            log.error(f"Request failed for {method} {url} with error: {str(e)}")
-            log.error(f"Stack trace:\n{traceback.format_exc()}")
+            self.log.error(f"Request failed for {method} {url} with error: {str(e)}")
+            self.log.error(f"Stack trace:\n{traceback.format_exc()}")
             raise e
 
         if self.debug:
-            log.debug("Response: {code} {content}".format(code=r.status_code, content=r.content))
+            self.log.debug("Response: {code} {content}".format(code=r.status_code, content=r.content))
 
         # Validate the content type.
         if "json" in r.headers["content-type"]:
             try:
                 data = json.loads(r.content.decode("utf8"))
             except ValueError:
-                log.error(f"JSON parsing failed for response content: {r.content}")
-                log.error(f"Stack trace:\n{traceback.format_exc()}")
+                self.log.error(f"JSON parsing failed for response content: {r.content}")
+                self.log.error(f"Stack trace:\n{traceback.format_exc()}")
                 raise ex.XTSDataException("Couldn't parse the JSON response received from the server: {content}".format(
                     content=r.content))
 
@@ -1697,7 +1714,7 @@ class XTSConnect(XTSCommon):
 
             return data
         else:
-            log.error(f"Invalid Content-Type: {r.headers.get('content-type','')} for response content: {r.content}")
+            self.log.error(f"Invalid Content-Type: {r.headers.get('content-type','')} for response content: {r.content}")
             raise ex.XTSDataException("Unknown Content-Type ({content_type}) with response: ({content})".format(
                 content_type=r.headers.get("content-type"),
                 content=r.content))
