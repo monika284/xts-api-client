@@ -59,6 +59,27 @@ wheels = [
 ]
 
 [[package]]
+name = "aiolimiter"
+version = "1.2.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/f1/23/b52debf471f7a1e42e362d959a3982bdcb4fe13a5d46e63d28868807a79c/aiolimiter-1.2.1.tar.gz", hash = "sha256:e02a37ea1a855d9e832252a105420ad4d15011505512a1a1d814647451b5cca9", size = 7185, upload-time = "2024-12-08T15:31:51.496Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/f3/ba/df6e8e1045aebc4778d19b8a3a9bc1808adb1619ba94ca354d9ba17d86c3/aiolimiter-1.2.1-py3-none-any.whl", hash = "sha256:d3f249e9059a20badcb56b61601a83556133655c11d1eb3dd3e04ff069e5f3c7", size = 6711, upload-time = "2024-12-08T15:31:49.874Z" },
+]
+
+[[package]]
+name = "aioresilience"
+version = "0.2.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "aiolimiter" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/5e/29/5b376a5e527e06916072c9f41c4ade4d82481dfb7abfbc09b037e21eb7e7/aioresilience-0.2.1.tar.gz", hash = "sha256:fdf474d7168f6cf7a16308659cf27d1d2da8e56546331576132540d04416c437", size = 111629, upload-time = "2025-11-08T08:28:04.126Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/00/10/edec95e8ceccf935184bc1a4640812a2fa6284d505850eece2da7fbca81d/aioresilience-0.2.1-py3-none-any.whl", hash = "sha256:1c48da16ef2f6e5b143a9e20c69a2e2608064b5dace2707f98ad4ab0b73355de", size = 101892, upload-time = "2025-11-08T08:28:02.414Z" },
+]
+
+[[package]]
 name = "aiosignal"
 version = "1.3.2"
 source = { registry = "https://pypi.org/simple" }
@@ -1442,10 +1463,11 @@ wheels = [
 
 [[package]]
 name = "xts-api-client"
-version = "0.1.21"
+version = "0.1.22"
 source = { editable = "." }
 dependencies = [
     { name = "aiohttp" },
+    { name = "aioresilience" },
     { name = "httpx" },
     { name = "pandas" },
     { name = "pre-commit" },
@@ -1471,6 +1493,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "aiohttp", specifier = "==3.11.11" },
+    { name = "aioresilience", specifier = ">=0.2.1" },
     { name = "httpx", specifier = ">=0.28.1" },
     { name = "pandas", specifier = ">=2.2.3" },
     { name = "pre-commit", specifier = ">=3.7.0" },

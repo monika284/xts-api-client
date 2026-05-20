@@ -5,6 +5,8 @@ from typing import List, Dict, Any
 
 #import httpx as requests
 from httpx import AsyncClient as requests
+from aioresilience import Bulkhead, RateLimiter, RetryPolicy, RetryStrategy
+from aioresilience.config import BulkheadConfig, RetryConfig
 from urllib.parse import urljoin
 from datetime import datetime
 import pytz
@@ -130,7 +132,11 @@ class XTSConnect(XTSCommon):
                  timeout=1200, # chnaged from 7 to 1200, around 20 minutes.
                  pool=None,
                  disable_ssl=True,
-                 logger=None
+                 logger=None,
+                 max_requests_per_second: int = 10,
+                 max_concurrent_requests: int = 10,
+                 max_retries: int = 3,
+                 retry_base_delay: float = 0.5
                  ):
         """
         Initialise a new XTS Connect client instance.
@@ -173,6 +179,33 @@ class XTSConnect(XTSCommon):
             self.log = logging.getLogger(__name__)
 
         super().__init__()
+
+        # Centralized resilience policy for all outgoing HTTP requests.
+        self._rate_limiter = RateLimiter()
+        self._rate_limit_rule = f"{max_requests_per_second}/second"
+        self._bulkhead = Bulkhead(
+            name="xts-http-bulkhead",
+            config=BulkheadConfig(
+                max_concurrent=max_concurrent_requests,
+                max_waiting=max_concurrent_requests * 100,
+                timeout=None,
+            ),
+        )
+        self._retry_policy = RetryPolicy(
+            config=RetryConfig(
+                max_attempts=max_retries,
+                initial_delay=retry_base_delay,
+                strategy=RetryStrategy.EXPONENTIAL,
+                retry_on_exceptions=(
+                    PoolTimeout,
+                    ConnectTimeout,
+                    ReadTimeout,
+                    ConnectError,
+                    ex.XTSNetworkException,
+                ),
+            )
+        )
+        self._no_retry_routes = {"order.place"}
 
         # Create requests session only if pool exists. Reuse session
         # for every request. Otherwise create session for each request
@@ -1672,28 +1705,32 @@ class XTSConnect(XTSCommon):
             headers.update({'Content-Type': 'application/json', 'Authorization': self.token})
 
         try:
-            # r = await self.reqsession.request(method,
-            #                             url,
-            #                             data=params if method in ["POST", "PUT"] else None,
-            #                             params=params if method in ["GET", "DELETE"] else None,
-            #                             headers=headers,
-            #                             verify=not self.disable_ssl)
+            rate_limit_key = str(self.userID or self.apiKey or "xts-client")
+            await self._wait_for_rate_limit_slot(
+                rate_limit_key=rate_limit_key,
+                rate_limit_rule=self._rate_limit_rule,
+            )
 
-            r = await self.reqsession.request(method = method, url = url,
-                                        data=params if method in ["POST", "PUT"] else None,
-                                        params=params if method in ["GET", "DELETE"] else None,
-                                        headers=headers)
+            request_sender = self._send_request_once if route in self._no_retry_routes else self._send_request_with_retry
+            r = await self._bulkhead.execute(
+                request_sender,
+                method,
+                url,
+                params,
+                headers,
+            )
         except Exception as e:
             #log the full stack trace for debugging
             self.log.error(f"Request failed for {method} {url} with error: {str(e)}")
             self.log.error(f"Stack trace:\n{traceback.format_exc()}")
-            raise e
+            raise
 
         if self.debug:
             self.log.debug("Response: {code} {content}".format(code=r.status_code, content=r.content))
 
         # Validate the content type.
-        if "json" in r.headers["content-type"]:
+        content_type = r.headers.get("content-type", "")
+        if "json" in content_type:
             try:
                 data = json.loads(r.content.decode("utf8"))
             except ValueError:
@@ -1714,7 +1751,54 @@ class XTSConnect(XTSCommon):
 
             return data
         else:
-            self.log.error(f"Invalid Content-Type: {r.headers.get('content-type','')} for response content: {r.content}")
+            self.log.error(f"Invalid Content-Type: {content_type} for response content: {r.content}")
             raise ex.XTSDataException("Unknown Content-Type ({content_type}) with response: ({content})".format(
-                content_type=r.headers.get("content-type"),
+                content_type=content_type,
                 content=r.content))
+
+    async def _send_request_with_retry(self, method, url, params, headers):
+        """Send request through aioresilience retry policy."""
+        return await self._retry_policy.execute(
+            self._send_request_once,
+            method,
+            url,
+            params,
+            headers,
+        )
+
+    async def _send_request_once(self, method, url, params, headers):
+        """Single HTTP attempt used by retry policy."""
+        response = await self.reqsession.request(
+            method=method,
+            url=url,
+            data=params if method in ["POST", "PUT"] else None,
+            params=params if method in ["GET", "DELETE"] else None,
+            headers=headers,
+        )
+
+        if response.status_code in [429, 500, 502, 503, 504]:
+            raise ex.XTSNetworkException(
+                f"Temporary HTTP error status={response.status_code} for {method} {url}"
+            )
+
+        return response
+
+    async def _wait_for_rate_limit_slot(self, rate_limit_key: str, rate_limit_rule: str, sleep_interval: float = 0.05) -> None:
+        """
+        Wait until aioresilience RateLimiter allows the request.
+
+        aioresilience check_rate_limit() returns True/False.
+        It does not automatically queue/wait.
+        So we poll until allowed.
+        """
+
+        while True:
+            is_allowed = await self._rate_limiter.check_rate_limit(
+                rate_limit_key,
+                rate_limit_rule,
+            )
+
+            if is_allowed:
+                return
+
+            await asyncio.sleep(sleep_interval)
