@@ -8,7 +8,6 @@ from datetime import datetime
 
 from . import xts_exception as ex
 
-log = logging.getLogger(__name__)
 
 
 class XTSCommon:
@@ -120,7 +119,8 @@ class XTSConnect(XTSCommon):
                  debug=False,
                  timeout=7,
                  pool=None,
-                 disable_ssl=False):
+                 disable_ssl=False,
+                 logger=None):
         """
         Initialise a new XTS Connect client instance.
 
@@ -144,6 +144,22 @@ class XTSConnect(XTSCommon):
         self.root = root 
         self.timeout = timeout
         self.last_login_time = None  
+
+        if isinstance(logger, logging.Logger):
+            # If they passed an actual Logger object, use it as is
+            self.log = logger
+        elif isinstance(logger, str):
+            # If they passed a string, set up a FileHandler for them
+            self.log = logging.getLogger(__name__)
+            if not self.log.handlers:
+                handler = logging.FileHandler(logger)
+                fmt = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+                handler.setFormatter(fmt)
+                self.log.addHandler(handler)
+                self.log.setLevel(logging.DEBUG if debug else logging.INFO)
+        else:
+            # Fallback: use the standard module-level logger
+            self.log = logging.getLogger(__name__)
 
         super().__init__()
 
@@ -784,10 +800,10 @@ class XTSConnect(XTSCommon):
                                         verify=not self.disable_ssl)
 
         except Exception as e:
-            raise e
+            raise
 
         if self.debug:
-            log.debug("Response: {code} {content}".format(code=r.status_code, content=r.content))
+            self.log.debug("Response: {code} {content}".format(code=r.status_code, content=r.content))
 
         # Validate the content type.
         if "json" in r.headers["content-type"]:

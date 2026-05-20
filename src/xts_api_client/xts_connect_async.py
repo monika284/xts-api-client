@@ -1,17 +1,21 @@
 import json
 import logging
+import os
+import random
+import time
 import traceback
 from typing import List, Dict, Any
 
 #import httpx as requests
 from httpx import AsyncClient as requests
+from aioresilience import Bulkhead, RateLimiter, RetryPolicy, RetryStrategy
+from aioresilience.config import BulkheadConfig, RetryConfig
 from urllib.parse import urljoin
 from datetime import datetime
 import pytz
 from httpx import PoolTimeout, ConnectTimeout, ReadTimeout, ConnectError
 from . import xts_exception as ex
 import asyncio
-log = logging.getLogger(__name__)
 
 
 class XTSCommon:
@@ -130,7 +134,18 @@ class XTSConnect(XTSCommon):
                  debug=False,
                  timeout=1200, # chnaged from 7 to 1200, around 20 minutes.
                  pool=None,
-                 disable_ssl=True):
+                 disable_ssl=True,
+                 logger=None,
+                 max_requests_per_second: int = 10,
+                 max_concurrent_requests: int = 10,
+                 bulkhead_max_waiting: int | None = None,
+                 bulkhead_timeout: float = 5.0,
+                 max_retries: int = 3,
+                 retry_base_delay: float = 0.5,
+                 rate_limit_max_wait_seconds: float = 5.0,
+                 rate_limit_initial_sleep: float = 0.05,
+                 rate_limit_max_sleep: float = 0.5
+                 ):
         """
         Initialise a new XTS Connect client instance.
 
@@ -155,7 +170,69 @@ class XTSConnect(XTSCommon):
         self.timeout = timeout
         self.last_login_time = None   
 
+        if isinstance(logger, logging.Logger):
+            # If they passed an actual Logger object, use it as is
+            self.log = logger
+        elif isinstance(logger, str):
+            # If they passed a path, create an instance-specific logger bound to that file.
+            self.log = logging.getLogger(f"{__name__}.{id(self)}")
+            self.log.propagate = False
+            self.log.setLevel(logging.DEBUG if debug else logging.INFO)
+
+            requested_path = os.path.abspath(logger)
+            has_same_file_handler = False
+            for existing_handler in self.log.handlers:
+                if isinstance(existing_handler, logging.FileHandler):
+                    if os.path.abspath(existing_handler.baseFilename) == requested_path:
+                        has_same_file_handler = True
+                        break
+
+            if not has_same_file_handler:
+                handler = logging.FileHandler(requested_path)
+                fmt = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+                handler.setFormatter(fmt)
+                self.log.addHandler(handler)
+        else:
+            # Fallback: use the standard module-level logger
+            self.log = logging.getLogger(__name__)
+
         super().__init__()
+
+        # Centralized resilience policy for all outgoing HTTP requests.
+        self._rate_limiter = RateLimiter()
+        self._rate_limit_rule = f"{max_requests_per_second}/second"
+
+        resolved_bulkhead_max_waiting = (
+            bulkhead_max_waiting
+            if bulkhead_max_waiting is not None
+            else max(max_concurrent_requests * 2, 1)
+        )
+        self._bulkhead = Bulkhead(
+            name="xts-http-bulkhead",
+            config=BulkheadConfig(
+                max_concurrent=max_concurrent_requests,
+                max_waiting=resolved_bulkhead_max_waiting,
+                timeout=bulkhead_timeout,
+            ),
+        )
+        self._retry_policy = RetryPolicy(
+            config=RetryConfig(
+                max_attempts=max_retries,
+                initial_delay=retry_base_delay,
+                strategy=RetryStrategy.EXPONENTIAL,
+                retry_on_exceptions=(
+                    PoolTimeout,
+                    ConnectTimeout,
+                    ReadTimeout,
+                    ConnectError,
+                    ex.XTSNetworkException,
+                ),
+            )
+        )
+        self._rate_limit_max_wait_seconds = rate_limit_max_wait_seconds
+        self._rate_limit_initial_sleep = rate_limit_initial_sleep
+        self._rate_limit_max_sleep = rate_limit_max_sleep
+        self._no_retry_routes = {"order.place"}
 
         # Create requests session only if pool exists. Reuse session
         # for every request. Otherwise create session for each request
@@ -198,14 +275,14 @@ class XTSConnect(XTSCommon):
             return response
         elif response.get('type') == 'error':
             error_msg = f"{operation} failed: {response.get('description', 'Unknown error')}"
-            log.error(error_msg)
+            self.log.error(error_msg)
             raise Exception(error_msg)
         elif response.get('result') is not None:
             # Handle inconsistent XTS API behavior
             return response
         else:
             error_msg = f"{operation} failed: Unexpected response format"
-            log.error(error_msg)
+            self.log.error(error_msg)
             raise Exception(error_msg)
 
     def _add_client_id(self, params: Dict[str, Any], clientID="*****") -> Dict[str, Any]:
@@ -260,11 +337,11 @@ class XTSConnect(XTSCommon):
             return response
         elif response.get('type') == 'error':
             error_msg = f"Login failed: {response.get('description', 'Unknown error')}"
-            log.error(error_msg)
+            self.log.error(error_msg)
             raise Exception(error_msg)
         else:
             error_msg = "Login failed: Unexpected response format"
-            log.error(error_msg)
+            self.log.error(error_msg)
             raise Exception(error_msg)
 
     async def get_order_book(self, clientID="*****"):
@@ -1218,11 +1295,11 @@ class XTSConnect(XTSCommon):
             return response
         elif response.get('type') == 'error':
             error_msg = f'API responded with error: {response.get("description","Unknown error")}'
-            log.error(error_msg)
+            self.log.error(error_msg)
             raise Exception(error_msg)
         else:
             error_msg = 'Unexpected API response format.'
-            log.error(error_msg)
+            self.log.error(error_msg)
             raise Exception(error_msg)
         
     async def get_config(self):
@@ -1655,33 +1732,39 @@ class XTSConnect(XTSCommon):
             headers.update({'Content-Type': 'application/json', 'Authorization': self.token})
 
         try:
-            # r = await self.reqsession.request(method,
-            #                             url,
-            #                             data=params if method in ["POST", "PUT"] else None,
-            #                             params=params if method in ["GET", "DELETE"] else None,
-            #                             headers=headers,
-            #                             verify=not self.disable_ssl)
+            rate_limit_key = str(self.userID or self.apiKey or "xts-client")
+            await self._wait_for_rate_limit_slot(
+                rate_limit_key=rate_limit_key,
+                rate_limit_rule=self._rate_limit_rule,
+            )
 
-            r = await self.reqsession.request(method = method, url = url,
-                                        data=params if method in ["POST", "PUT"] else None,
-                                        params=params if method in ["GET", "DELETE"] else None,
-                                        headers=headers)
+            request_sender = self._send_request_once if route in self._no_retry_routes else self._send_request_with_retry
+            r = await self._bulkhead.execute(
+                request_sender,
+                method,
+                url,
+                params,
+                headers,
+            )
+        except asyncio.CancelledError:
+            raise
         except Exception as e:
             #log the full stack trace for debugging
-            log.error(f"Request failed for {method} {url} with error: {str(e)}")
-            log.error(f"Stack trace:\n{traceback.format_exc()}")
-            raise e
+            self.log.error(f"Request failed for {method} {url} with error: {str(e)}")
+            self.log.error(f"Stack trace:\n{traceback.format_exc()}")
+            raise
 
         if self.debug:
-            log.debug("Response: {code} {content}".format(code=r.status_code, content=r.content))
+            self.log.debug("Response: {code} {content}".format(code=r.status_code, content=r.content))
 
         # Validate the content type.
-        if "json" in r.headers["content-type"]:
+        content_type = r.headers.get("content-type", "")
+        if "json" in content_type:
             try:
                 data = json.loads(r.content.decode("utf8"))
             except ValueError:
-                log.error(f"JSON parsing failed for response content: {r.content}")
-                log.error(f"Stack trace:\n{traceback.format_exc()}")
+                self.log.error(f"JSON parsing failed for response content: {r.content}")
+                self.log.error(f"Stack trace:\n{traceback.format_exc()}")
                 raise ex.XTSDataException("Couldn't parse the JSON response received from the server: {content}".format(
                     content=r.content))
 
@@ -1697,7 +1780,68 @@ class XTSConnect(XTSCommon):
 
             return data
         else:
-            log.error(f"Invalid Content-Type: {r.headers.get('content-type','')} for response content: {r.content}")
+            self.log.error(f"Invalid Content-Type: {content_type} for response content: {r.content}")
             raise ex.XTSDataException("Unknown Content-Type ({content_type}) with response: ({content})".format(
-                content_type=r.headers.get("content-type"),
+                content_type=content_type,
                 content=r.content))
+
+    async def _send_request_with_retry(self, method, url, params, headers):
+        """Send request through aioresilience retry policy."""
+        return await self._retry_policy.execute(
+            self._send_request_once,
+            method,
+            url,
+            params,
+            headers,
+        )
+
+    async def _send_request_once(self, method, url, params, headers):
+        """Single HTTP attempt used by retry policy."""
+        response = await self.reqsession.request(
+            method=method,
+            url=url,
+            data=params if method in ["POST", "PUT"] else None,
+            params=params if method in ["GET", "DELETE"] else None,
+            headers=headers,
+        )
+
+        if response.status_code in [429, 500, 502, 503, 504]:
+            raise ex.XTSNetworkException(
+                f"Temporary HTTP error status={response.status_code} for {method} {url}"
+            )
+
+        return response
+
+    async def _wait_for_rate_limit_slot(self, rate_limit_key: str, rate_limit_rule: str) -> None:
+        """
+        Wait until aioresilience RateLimiter allows the request, bounded by max wait.
+
+        aioresilience check_rate_limit() returns True/False.
+        It does not automatically queue/wait.
+        So we poll with backoff+jitter until allowed or timeout.
+        """
+        start_time = time.monotonic()
+        sleep_interval = self._rate_limit_initial_sleep
+
+        while True:
+            is_allowed = await self._rate_limiter.check_rate_limit(
+                rate_limit_key,
+                rate_limit_rule,
+            )
+
+            if is_allowed:
+                return
+
+            elapsed = time.monotonic() - start_time
+            if elapsed >= self._rate_limit_max_wait_seconds:
+                raise ex.XTSNetworkException(
+                    f"Rate limit wait timeout after {self._rate_limit_max_wait_seconds:.2f}s "
+                    f"for key={rate_limit_key} rule={rate_limit_rule}"
+                )
+
+            jitter = random.uniform(0, min(sleep_interval * 0.25, 0.05))
+            wait_time = min(sleep_interval + jitter, self._rate_limit_max_sleep)
+            remaining_budget = self._rate_limit_max_wait_seconds - elapsed
+            await asyncio.sleep(min(wait_time, remaining_budget))
+
+            sleep_interval = min(sleep_interval * 1.5, self._rate_limit_max_sleep)
