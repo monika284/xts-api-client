@@ -1,5 +1,8 @@
 import json
 import logging
+import os
+import random
+import time
 import traceback
 from typing import List, Dict, Any
 
@@ -135,8 +138,13 @@ class XTSConnect(XTSCommon):
                  logger=None,
                  max_requests_per_second: int = 10,
                  max_concurrent_requests: int = 10,
+                 bulkhead_max_waiting: int | None = None,
+                 bulkhead_timeout: float = 5.0,
                  max_retries: int = 3,
-                 retry_base_delay: float = 0.5
+                 retry_base_delay: float = 0.5,
+                 rate_limit_max_wait_seconds: float = 5.0,
+                 rate_limit_initial_sleep: float = 0.05,
+                 rate_limit_max_sleep: float = 0.5
                  ):
         """
         Initialise a new XTS Connect client instance.
@@ -166,14 +174,24 @@ class XTSConnect(XTSCommon):
             # If they passed an actual Logger object, use it as is
             self.log = logger
         elif isinstance(logger, str):
-            # If they passed a string, set up a FileHandler for them
-            self.log = logging.getLogger(__name__)
-            if not self.log.handlers:
-                handler = logging.FileHandler(logger)
+            # If they passed a path, create an instance-specific logger bound to that file.
+            self.log = logging.getLogger(f"{__name__}.{id(self)}")
+            self.log.propagate = False
+            self.log.setLevel(logging.DEBUG if debug else logging.INFO)
+
+            requested_path = os.path.abspath(logger)
+            has_same_file_handler = False
+            for existing_handler in self.log.handlers:
+                if isinstance(existing_handler, logging.FileHandler):
+                    if os.path.abspath(existing_handler.baseFilename) == requested_path:
+                        has_same_file_handler = True
+                        break
+
+            if not has_same_file_handler:
+                handler = logging.FileHandler(requested_path)
                 fmt = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
                 handler.setFormatter(fmt)
                 self.log.addHandler(handler)
-                self.log.setLevel(logging.DEBUG if debug else logging.INFO)
         else:
             # Fallback: use the standard module-level logger
             self.log = logging.getLogger(__name__)
@@ -183,12 +201,18 @@ class XTSConnect(XTSCommon):
         # Centralized resilience policy for all outgoing HTTP requests.
         self._rate_limiter = RateLimiter()
         self._rate_limit_rule = f"{max_requests_per_second}/second"
+
+        resolved_bulkhead_max_waiting = (
+            bulkhead_max_waiting
+            if bulkhead_max_waiting is not None
+            else max(max_concurrent_requests * 2, 1)
+        )
         self._bulkhead = Bulkhead(
             name="xts-http-bulkhead",
             config=BulkheadConfig(
                 max_concurrent=max_concurrent_requests,
-                max_waiting=max_concurrent_requests * 100,
-                timeout=None,
+                max_waiting=resolved_bulkhead_max_waiting,
+                timeout=bulkhead_timeout,
             ),
         )
         self._retry_policy = RetryPolicy(
@@ -205,6 +229,9 @@ class XTSConnect(XTSCommon):
                 ),
             )
         )
+        self._rate_limit_max_wait_seconds = rate_limit_max_wait_seconds
+        self._rate_limit_initial_sleep = rate_limit_initial_sleep
+        self._rate_limit_max_sleep = rate_limit_max_sleep
         self._no_retry_routes = {"order.place"}
 
         # Create requests session only if pool exists. Reuse session
@@ -1719,6 +1746,8 @@ class XTSConnect(XTSCommon):
                 params,
                 headers,
             )
+        except asyncio.CancelledError:
+            raise
         except Exception as e:
             #log the full stack trace for debugging
             self.log.error(f"Request failed for {method} {url} with error: {str(e)}")
@@ -1783,14 +1812,16 @@ class XTSConnect(XTSCommon):
 
         return response
 
-    async def _wait_for_rate_limit_slot(self, rate_limit_key: str, rate_limit_rule: str, sleep_interval: float = 0.05) -> None:
+    async def _wait_for_rate_limit_slot(self, rate_limit_key: str, rate_limit_rule: str) -> None:
         """
-        Wait until aioresilience RateLimiter allows the request.
+        Wait until aioresilience RateLimiter allows the request, bounded by max wait.
 
         aioresilience check_rate_limit() returns True/False.
         It does not automatically queue/wait.
-        So we poll until allowed.
+        So we poll with backoff+jitter until allowed or timeout.
         """
+        start_time = time.monotonic()
+        sleep_interval = self._rate_limit_initial_sleep
 
         while True:
             is_allowed = await self._rate_limiter.check_rate_limit(
@@ -1801,4 +1832,16 @@ class XTSConnect(XTSCommon):
             if is_allowed:
                 return
 
-            await asyncio.sleep(sleep_interval)
+            elapsed = time.monotonic() - start_time
+            if elapsed >= self._rate_limit_max_wait_seconds:
+                raise ex.XTSNetworkException(
+                    f"Rate limit wait timeout after {self._rate_limit_max_wait_seconds:.2f}s "
+                    f"for key={rate_limit_key} rule={rate_limit_rule}"
+                )
+
+            jitter = random.uniform(0, min(sleep_interval * 0.25, 0.05))
+            wait_time = min(sleep_interval + jitter, self._rate_limit_max_sleep)
+            remaining_budget = self._rate_limit_max_wait_seconds - elapsed
+            await asyncio.sleep(min(wait_time, remaining_budget))
+
+            sleep_interval = min(sleep_interval * 1.5, self._rate_limit_max_sleep)
