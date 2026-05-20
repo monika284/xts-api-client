@@ -800,7 +800,7 @@ class XTSConnect(XTSCommon):
                                         verify=not self.disable_ssl)
 
         except Exception as e:
-            raise e
+            raise
 
         if self.debug:
             self.log.debug("Response: {code} {content}".format(code=r.status_code, content=r.content))
