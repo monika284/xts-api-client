@@ -58,10 +58,10 @@ import os
 from dotenv import load_dotenv
 load_dotenv()
 
-API_key = os.getenv("API_KEY")
-API_secret = os.getenv("API_SECRET")
-API_source = os.getenv("API_SOURCE")
-API_root = os.getenv("API_URL")
+API_key = os.getenv("XTS_MARKETDATA_API_KEY")
+API_secret = os.getenv("XTS_MARKETDATA_SECRET_KEY")
+API_source = os.getenv("XTS_SOURCE")
+API_root = os.getenv("XTS_API_URL")
 
 """""""""""""""""""""""""""""""""""""""
       |DataFrame for Cash Market|
