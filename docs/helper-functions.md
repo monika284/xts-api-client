@@ -506,10 +506,10 @@ Instruments = [
 class XTS_MarketDataSocketClient(MarketDataSocketClient):
     async def test(self):
         load_dotenv()
-        API_key = os.getenv("API_KEY")
-        API_secret = os.getenv("API_SECRET")
-        API_source = os.getenv("API_SOURCE")
-        API_root = os.getenv("API_URL")
+        API_key = os.getenv("XTS_MARKETDATA_API_KEY")
+        API_secret = os.getenv("XTS_MARKETDATA_SECRET_KEY")
+        API_source = os.getenv("XTS_SOURCE")
+        API_root = os.getenv("XTS_API_URL")
         xt = XTSConnect(API_key, API_secret, API_source, API_root, disable_ssl=True)
         response = xt.marketdata_login()
         marketDataToken = response["result"]["token"]
