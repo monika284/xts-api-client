@@ -40,4 +40,4 @@ dev = [
 ]
 [project.urls]
 Homepage = "https://github.com/sharanchetan/xts-api-client"
-Documentation = "https://xts-api-client.readthedocs.io/en/latest/"
+Documentation = "https://xts-api-documentation-main.readthedocs.io/en/latest/"
